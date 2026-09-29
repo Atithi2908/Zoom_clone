@@ -1,14 +1,14 @@
 /**
- * WebRTC Configuration & Peer Connection Helper
+ * WebRTC Configuration & Peer Connection Helpers
  *
- * This file provides straightforward WebRTC peer connection helpers:
- * 1. PeerConnection setup with public STUN servers for NAT traversal.
- * 2. SDP Offer generation (Host -> Peer).
- * 3. SDP Answer generation (Peer -> Host).
- * 4. ICE candidate exchange.
+ * Provides straightforward, easy-to-explain WebRTC primitives:
+ * 1. RTCPeerConnection initialization with Google's public STUN servers.
+ * 2. Attaching local media tracks (video & audio).
+ * 3. Creating SDP Offers and Answers.
+ * 4. Applying remote session descriptions and adding ICE candidates.
  */
 
-// Public Google STUN servers allow peers to discover their public IP addresses for direct P2P streaming.
+// Public Google STUN servers resolve public IP addresses for NAT traversal
 export const RTC_CONFIG: RTCConfiguration = {
   iceServers: [
     { urls: 'stun:stun.l.google.com:19302' },
@@ -17,7 +17,7 @@ export const RTC_CONFIG: RTCConfiguration = {
 };
 
 /**
- * Initializes a new RTCPeerConnection and binds listeners for remote tracks and ICE candidates.
+ * Creates an RTCPeerConnection and binds listeners for ICE candidates and remote tracks.
  */
 export function createPeerConnection(
   onRemoteTrack: (event: RTCTrackEvent) => void,
@@ -25,14 +25,14 @@ export function createPeerConnection(
 ): RTCPeerConnection {
   const pc = new RTCPeerConnection(RTC_CONFIG);
 
-  // Fired when the local browser discovers an ICE candidate to send to the remote peer
+  // Fired when the browser finds a network candidate to send to the remote peer
   pc.onicecandidate = (event) => {
     if (event.candidate) {
       onIceCandidate(event.candidate);
     }
   };
 
-  // Fired when the remote peer's media track (video or audio) arrives
+  // Fired when an incoming media track (audio or video) arrives from the remote peer
   pc.ontrack = (event) => {
     onRemoteTrack(event);
   };
@@ -41,7 +41,7 @@ export function createPeerConnection(
 }
 
 /**
- * Adds all audio and video tracks from a local MediaStream to the RTCPeerConnection.
+ * Adds local audio and video tracks from a MediaStream to the RTCPeerConnection.
  */
 export function addTracksToConnection(pc: RTCPeerConnection, stream: MediaStream) {
   stream.getTracks().forEach((track) => {
@@ -50,8 +50,7 @@ export function addTracksToConnection(pc: RTCPeerConnection, stream: MediaStream
 }
 
 /**
- * Creates an SDP Offer (Session Description Protocol) describing local media capabilities.
- * Sets the offer as the local description and returns it to be sent over WebSocket.
+ * Creates an SDP Offer describing local capabilities and sets it as the local description.
  */
 export async function createOffer(pc: RTCPeerConnection): Promise<RTCSessionDescriptionInit> {
   const offer = await pc.createOffer({
@@ -63,10 +62,10 @@ export async function createOffer(pc: RTCPeerConnection): Promise<RTCSessionDesc
 }
 
 /**
- * Handles an incoming SDP Offer from a remote peer:
- * 1. Sets the remote description.
- * 2. Creates an SDP Answer acknowledging codecs/capabilities.
- * 3. Sets the answer as the local description.
+ * Handles an incoming SDP Offer:
+ * 1. Sets remote description.
+ * 2. Generates an SDP Answer.
+ * 3. Sets local description with the answer.
  */
 export async function createAnswer(
   pc: RTCPeerConnection,
@@ -91,21 +90,7 @@ export async function handleRemoteAnswer(
 }
 
 /**
- * Adds a network candidate received from the remote peer via WebSocket.
- */
-export async function handleRemoteIceCandidate(
-  pc: RTCPeerConnection,
-  candidate: RTCIceCandidateInit
-): Promise<void> {
-  try {
-    await pc.addIceCandidate(new RTCIceCandidate(candidate));
-  } catch (err) {
-    console.warn('[WebRTC] Error adding received ICE candidate:', err);
-  }
-}
-
-/**
- * Requests user permission for camera and microphone.
+ * Requests user camera and microphone permissions.
  */
 export async function getLocalUserMedia(
   audioEnabled = true,
@@ -113,21 +98,16 @@ export async function getLocalUserMedia(
 ): Promise<MediaStream | null> {
   try {
     return await navigator.mediaDevices.getUserMedia({
-      audio: audioEnabled,
-      video: videoEnabled
-        ? { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } }
-        : false,
+      audio: true,
+      video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } },
     });
   } catch (error) {
-    console.warn('[WebRTC] Could not acquire camera/mic stream:', error);
-    // Attempt audio-only if video failed (e.g., no webcam plugged in)
-    if (videoEnabled && audioEnabled) {
-      try {
-        return await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-      } catch (audioError) {
-        console.warn('[WebRTC] Audio-only fallback also failed:', audioError);
-      }
+    console.warn('[WebRTC] Camera access failed, trying audio only:', error);
+    try {
+      return await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    } catch (audioError) {
+      console.warn('[WebRTC] Microphone access also failed:', audioError);
+      return null;
     }
-    return null;
   }
 }

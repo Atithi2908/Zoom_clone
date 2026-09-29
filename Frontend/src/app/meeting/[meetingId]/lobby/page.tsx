@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, Suspense } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import {
@@ -16,7 +16,7 @@ import {
 import { api } from '@/lib/api';
 import { MeetingValidationResponse } from '@/types';
 
-export default function MeetingLobbyPage() {
+function LobbyContent() {
   const params = useParams();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -343,5 +343,22 @@ export default function MeetingLobbyPage() {
         </form>
       </div>
     </div>
+  );
+}
+
+export default function MeetingLobbyPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="dashboard-container" style={{ alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ textAlign: 'center', padding: '40px' }}>
+            <Loader2 size={40} className="animate-spin" color="var(--zoom-blue)" />
+            <h3 style={{ marginTop: '16px' }}>Loading Lobby...</h3>
+          </div>
+        </div>
+      }
+    >
+      <LobbyContent />
+    </Suspense>
   );
 }

@@ -4,9 +4,13 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 router = APIRouter(tags=["signaling"])
 
+def normalize_meeting_id(raw_id: str) -> str:
+    """Normalize ID to digits-only so hyphenated or raw strings map to the same room."""
+    return raw_id.strip().replace(" ", "").replace("-", "")
+
 class SignalingManager:
     """
-    Manages active WebRTC signaling WebSocket connections by meeting_id.
+    Manages active WebRTC signaling WebSocket connections by normalized meeting_id.
     Relays WebRTC SDP offers, answers, and ICE candidates between peers in the same room.
     """
     def __init__(self):
@@ -24,6 +28,7 @@ class SignalingManager:
             "display_name": display_name
         }
         self.rooms[meeting_id].append(peer_info)
+        print(f"[WS] Peer '{display_name}' ({session_id}) joined room '{meeting_id}'. Total peers: {len(self.rooms[meeting_id])}")
 
         # Notify other peer in the room that a new peer has joined
         for peer in self.rooms[meeting_id]:
@@ -44,6 +49,7 @@ class SignalingManager:
         if meeting_id in self.rooms:
             # Remove disconnected peer
             self.rooms[meeting_id] = [p for p in self.rooms[meeting_id] if p["session_id"] != session_id]
+            print(f"[WS] Peer '{session_id}' left room '{meeting_id}'. Remaining: {len(self.rooms[meeting_id])}")
 
             # Broadcast departure to remaining peers
             for peer in self.rooms[meeting_id]:
@@ -81,7 +87,8 @@ async def websocket_signaling_endpoint(
     WebSocket endpoint for WebRTC signaling:
     Handles join, SDP offer, SDP answer, and ICE candidate exchanges.
     """
-    await manager.connect(websocket, meeting_id, session_id, name)
+    norm_id = normalize_meeting_id(meeting_id)
+    await manager.connect(websocket, norm_id, session_id, name)
     try:
         while True:
             raw_data = await websocket.receive_text()
@@ -93,9 +100,9 @@ async def websocket_signaling_endpoint(
             data["sender_name"] = name
 
             if msg_type in ["offer", "answer", "ice-candidate", "toggle-audio", "toggle-video"]:
-                await manager.broadcast_to_room(meeting_id, session_id, data)
+                await manager.broadcast_to_room(norm_id, session_id, data)
 
     except WebSocketDisconnect:
-        await manager.disconnect(meeting_id, session_id)
+        await manager.disconnect(norm_id, session_id)
     except Exception:
-        await manager.disconnect(meeting_id, session_id)
+        await manager.disconnect(norm_id, session_id)
