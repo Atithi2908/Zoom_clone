@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Video, Plus, Calendar, MonitorUp, Loader2 } from 'lucide-react';
 import { api } from '@/lib/api';
+import { auth } from '@/lib/auth';
 
 export default function ActionCards() {
   const router = useRouter();
@@ -14,12 +15,16 @@ export default function ActionCards() {
     try {
       setIsCreating(true);
       setErrorMsg(null);
+      const curUser = auth.getCurrentUser();
+      const hostName = curUser?.full_name || 'Atithi (Host)';
       const meeting = await api.createInstantMeeting({
-        title: "Atithi's Instant Meeting",
-        host_name: 'Atithi (Host)',
+        title: `${hostName}'s Instant Meeting`,
+        host_name: hostName,
+        host_email: curUser?.email || 'atithi@zoom.clone',
+        host_id: curUser?.id,
       });
       // Redirect host to meeting lobby
-      router.push(`/meeting/${meeting.meeting_id}/lobby?host=true`);
+      router.push(`/meeting/${meeting.meeting_id}/lobby?name=${encodeURIComponent(hostName)}`);
     } catch (err: any) {
       console.error('Failed to create instant meeting:', err);
       setErrorMsg(err.message || 'Failed to start meeting. Ensure backend is running.');

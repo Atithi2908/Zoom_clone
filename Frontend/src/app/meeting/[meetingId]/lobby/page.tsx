@@ -14,6 +14,7 @@ import {
   User,
 } from 'lucide-react';
 import { api } from '@/lib/api';
+import { auth } from '@/lib/auth';
 import { MeetingValidationResponse } from '@/types';
 
 function LobbyContent() {
@@ -23,14 +24,26 @@ function LobbyContent() {
 
   const meetingId = params.meetingId as string;
   const isHostParam = searchParams.get('host') === 'true';
+  const nameParam = searchParams.get('name');
+  const loggedInUser = auth.getCurrentUser();
 
   // Meeting verification state
   const [isValidating, setIsValidating] = useState(true);
   const [meetingData, setMeetingData] = useState<MeetingValidationResponse | null>(null);
   const [validationError, setValidationError] = useState<string | null>(null);
 
+  // Determine whether current user is truly the host based on database meeting ownership
+  const isActualHost = Boolean(
+    loggedInUser && meetingData && (
+      (meetingData.host_id && loggedInUser.id === meetingData.host_id) ||
+      (meetingData.host_email && loggedInUser.email.toLowerCase() === meetingData.host_email.toLowerCase())
+    )
+  );
+
   // Participant identity
-  const [displayName, setDisplayName] = useState(isHostParam ? 'Atithi (Host)' : '');
+  const [displayName, setDisplayName] = useState(
+    nameParam || (loggedInUser?.full_name ? loggedInUser.full_name : '')
+  );
   const [isJoining, setIsJoining] = useState(false);
 
   // Media preview state
@@ -134,7 +147,8 @@ function LobbyContent() {
   // Step 3: Handle Join Meeting
   const handleJoinMeeting = async (e: React.FormEvent) => {
     e.preventDefault();
-    const finalName = displayName.trim() || (isHostParam ? 'Atithi (Host)' : 'Participant');
+    const finalName = displayName.trim() || (isActualHost ? (loggedInUser?.full_name || 'Host') : 'Participant');
+    const assignedRole = isActualHost ? 'host' : 'participant';
 
     try {
       setIsJoining(true);
@@ -142,11 +156,12 @@ function LobbyContent() {
       // Generate a client session UUID for this participant connection
       const sessionId = 'sess_' + Math.random().toString(36).substring(2, 11);
 
-      // Register participant in SQLite via FastAPI
+      // Register participant in SQLite via FastAPI with user_email for attendance tracking
       await api.registerParticipant(meetingId, {
         display_name: finalName,
-        role: isHostParam ? 'host' : 'participant',
+        role: assignedRole,
         session_id: sessionId,
+        user_email: loggedInUser?.email || undefined,
       });
 
       // Stop lobby tracks so meeting room can capture clean stream
@@ -158,7 +173,7 @@ function LobbyContent() {
       const queryParams = new URLSearchParams({
         session_id: sessionId,
         name: finalName,
-        role: isHostParam ? 'host' : 'participant',
+        role: assignedRole,
         audio: isAudioEnabled ? '1' : '0',
         video: isVideoEnabled ? '1' : '0',
       });
@@ -186,13 +201,21 @@ function LobbyContent() {
     );
   }
 
-  // Render Invalid Meeting Error State
+  // Render Invalid / Ended / Unstarted Meeting Error State
   if (validationError || !meetingData) {
+    const isUnstarted = validationError?.includes('not started');
+    const isEnded = validationError?.includes('ended');
+    const errorHeading = isUnstarted
+      ? 'Meeting Has Not Started Yet'
+      : isEnded
+      ? 'Meeting Has Ended'
+      : 'Meeting Not Available';
+
     return (
       <div className="dashboard-container" style={{ alignItems: 'center', justifyContent: 'center' }}>
         <div
           style={{
-            maxWidth: '480px',
+            maxWidth: '500px',
             background: 'white',
             borderRadius: '16px',
             padding: '36px',
@@ -206,8 +229,8 @@ function LobbyContent() {
               width: '60px',
               height: '60px',
               borderRadius: '50%',
-              background: '#FEE2E2',
-              color: '#DC2626',
+              background: isUnstarted ? '#EFF6FF' : '#FEE2E2',
+              color: isUnstarted ? 'var(--zoom-blue)' : '#DC2626',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
@@ -216,10 +239,10 @@ function LobbyContent() {
           >
             <AlertCircle size={32} />
           </div>
-          <h2 style={{ fontSize: '20px', fontWeight: 700, color: '#991B1B' }}>
-            Meeting Not Found
+          <h2 style={{ fontSize: '20px', fontWeight: 700, color: isUnstarted ? 'var(--zoom-blue)' : '#991B1B' }}>
+            {errorHeading}
           </h2>
-          <p style={{ color: 'var(--text-muted)', marginTop: '8px', fontSize: '14px' }}>
+          <p style={{ color: 'var(--text-main)', marginTop: '12px', fontSize: '15px', fontWeight: 500, lineHeight: 1.5 }}>
             {validationError}
           </p>
 
@@ -228,7 +251,7 @@ function LobbyContent() {
               Back to Home
             </Link>
             <Link href="/join" className="btn-primary">
-              Enter Different ID
+              Join Another Meeting
             </Link>
           </div>
         </div>

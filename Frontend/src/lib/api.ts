@@ -50,15 +50,21 @@ export const api = {
   },
 
   // Get upcoming meetings list
-  async getUpcomingMeetings(): Promise<Meeting[]> {
-    return fetchJson<Meeting[]>(`${API_BASE}/meetings/upcoming`, {
+  async getUpcomingMeetings(hostEmail?: string): Promise<Meeting[]> {
+    const url = hostEmail
+      ? `${API_BASE}/meetings/upcoming?host_email=${encodeURIComponent(hostEmail)}`
+      : `${API_BASE}/meetings/upcoming`;
+    return fetchJson<Meeting[]>(url, {
       cache: 'no-store',
     });
   },
 
   // Get recent meetings list
-  async getRecentMeetings(): Promise<Meeting[]> {
-    return fetchJson<Meeting[]>(`${API_BASE}/meetings/recent`, {
+  async getRecentMeetings(userEmail?: string): Promise<Meeting[]> {
+    const url = userEmail
+      ? `${API_BASE}/meetings/recent?user_email=${encodeURIComponent(userEmail)}`
+      : `${API_BASE}/meetings/recent`;
+    return fetchJson<Meeting[]>(url, {
       cache: 'no-store',
     });
   },

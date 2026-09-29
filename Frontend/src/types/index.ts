@@ -16,6 +16,8 @@ export interface Meeting {
   duration_minutes: number;
   invite_link: string;
   status: 'scheduled' | 'active' | 'completed';
+  host_id?: number;
+  host_email?: string;
   created_at: string;
   participants?: Participant[];
 }
@@ -27,11 +29,15 @@ export interface MeetingValidationResponse {
   status: string;
   scheduled_at: string;
   duration_minutes: number;
+  host_id?: number;
+  host_email?: string;
 }
 
 export interface InstantMeetingPayload {
   title?: string;
   host_name?: string;
+  host_email?: string;
+  host_id?: number;
 }
 
 export interface ScheduledMeetingPayload {
@@ -39,12 +45,15 @@ export interface ScheduledMeetingPayload {
   description?: string;
   scheduled_at: string;
   duration_minutes: number;
+  host_email?: string;
+  host_id?: number;
 }
 
 export interface ParticipantJoinPayload {
   display_name: string;
   role?: string;
   session_id: string;
+  user_email?: string;
 }
 
 // WebRTC Signaling Types
@@ -56,16 +65,41 @@ export type SignalMessageType =
   | 'ice-candidate'
   | 'peer-left'
   | 'toggle-audio'
-  | 'toggle-video';
+  | 'toggle-video'
+  | 'participant-state'
+  | 'host_control'
+  | 'meeting_ended'
+  | 'end_meeting'
+  | 'chat'
+  | 'reaction'
+  | 'error';
 
 export interface SignalMessage {
   type: SignalMessageType;
   from?: string;
+  sender_session_id?: string;
   sender_name?: string;
   session_id?: string;
   display_name?: string;
+  role?: 'host' | 'participant';
   sdp?: RTCSessionDescriptionInit;
   candidate?: RTCIceCandidateInit;
   audio?: boolean;
   video?: boolean;
+  is_audio_on?: boolean;
+  is_video_on?: boolean;
+  action?: 'mute' | 'camera_off' | 'remove';
+  target_session_id?: string;
+  text?: string;
+  emoji?: string;
+  timestamp?: string;
+  message?: string;
+}
+
+export interface RemoteParticipant {
+  sessionId: string;
+  displayName: string;
+  role: 'host' | 'participant';
+  isAudioOn: boolean;
+  isVideoOn: boolean;
 }

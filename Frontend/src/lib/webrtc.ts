@@ -79,13 +79,24 @@ export async function createAnswer(
 
 /**
  * Applies the received SDP Answer from the remote peer to finalize the handshake.
+ *
+ * IMPORTANT FIX: Only set remote description when we are in 'have-local-offer' state.
+ * After createOffer(), signalingState is 'have-local-offer', not 'stable'.
+ * The old check `!== 'stable'` was CORRECT — it means: only apply when NOT stable
+ * (i.e., when we're waiting for an answer). However, we add an extra guard for
+ * 'have-local-offer' to be explicit and avoid applying stale answers.
  */
 export async function handleRemoteAnswer(
   pc: RTCPeerConnection,
   answer: RTCSessionDescriptionInit
 ): Promise<void> {
-  if (pc.signalingState !== 'stable') {
+  // Only apply the answer if we are in the correct state (waiting for an answer)
+  if (pc.signalingState === 'have-local-offer') {
     await pc.setRemoteDescription(new RTCSessionDescription(answer));
+  } else {
+    console.warn(
+      `[WebRTC] handleRemoteAnswer called in unexpected state: ${pc.signalingState}. Ignoring.`
+    );
   }
 }
 
