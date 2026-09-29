@@ -1,23 +1,108 @@
-# Node.js / Next.js
-Frontend/node_modules/
-Frontend/.next/
-Frontend/out/
-Frontend/build/
+# ==============================================================================
+# Dependencies & Package Managers
+# ==============================================================================
+node_modules/
+*/node_modules/
+.pnp
+.pnp.js
 
-# Python
-Backend/__pycache__/
-Backend/*/__pycache__/
-Backend/*/*/__pycache__/
-*.pyc
-*.pyo
-*.pyd
+# ==============================================================================
+# Build & Output Artifacts
+# ==============================================================================
+.next/
+*/.next/
+out/
+*/out/
+build/
+*/build/
+dist/
+*/dist/
+.vercel
+*.tsbuildinfo
+*/tsconfig.tsbuildinfo
+
+# ==============================================================================
+# Python & Virtual Environments
+# ==============================================================================
+__pycache__/
+*/__pycache__/
+*/*/__pycache__/
+*.py[cod]
+*$py.class
+*.so
 .Python
 env/
 venv/
 ENV/
+env.bak/
+venv.bak/
 
-# OS & IDE
+# ==============================================================================
+# Database & Storage (SQLite)
+# ==============================================================================
+*.db
+*.sqlite
+*.sqlite3
+Backend/zoom_clone.db
+zoom_clone.db
+
+# ==============================================================================
+# Environment & Secret Files (Keep .env.example)
+# ==============================================================================
+.env
+.env*.local
+.env.production
+.env.staging
+Backend/.env
+Frontend/.env
+Frontend/.env.local
+Frontend/.env.production
+
+# ==============================================================================
+# Logs & Diagnostic Files
+# ==============================================================================
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ==============================================================================
+# Testing, Scraping, Validation & Debug Scripts
+# ==============================================================================
+test_*.py
+verify_*.py
+check_*.py
+capture_*.py
+debug_*.py
+seed_atithi_meeting.py
+playwright-report/
+test-results/
+
+# ==============================================================================
+# Screenshots & Media Captures
+# ==============================================================================
+screenshots/
+*/screenshots/
+.tempmediaStorage/
+.user_uploaded/
+scratch/
+
+# ==============================================================================
+# IDE & Operating System Files
+# ==============================================================================
 .DS_Store
 Thumbs.db
-.vscode/
+desktop.ini
 .idea/
+.vscode/
+*.swp
+*.swo
+
+# ==============================================================================
+# Agent / Temporary files
+# ==============================================================================
+.system_generated/
+.gemini/
+.agents/
