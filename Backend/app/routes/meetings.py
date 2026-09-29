@@ -1,13 +1,13 @@
 import os
 import random
 from datetime import datetime, timezone
-from typing import List
+from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from sqlalchemy import desc, asc
+from sqlalchemy import desc, asc, func
 
 from ..database import get_db
-from ..models import Meeting, Participant
+from ..models import Meeting, Participant, User
 from ..schemas import (
     InstantMeetingCreate,
     ScheduledMeetingCreate,
@@ -19,7 +19,7 @@ from ..schemas import (
 
 router = APIRouter(prefix="/meetings", tags=["meetings"])
 
-FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000").rstrip("/")
 
 def generate_meeting_id() -> str:
     """Generate a clean Zoom-style 10-digit meeting ID: XXX-XXX-XXXX."""
@@ -35,22 +35,52 @@ def normalize_meeting_id(raw_id: str) -> str:
         return f"{cleaned[:3]}-{cleaned[3:6]}-{cleaned[6:]}"
     return raw_id.strip()
 
+def get_or_create_meeting(db: Session, raw_id: str) -> Meeting:
+    """Find meeting by normalized or raw ID, auto-provisioning PMI if needed."""
+    norm_id = normalize_meeting_id(raw_id)
+    meeting = db.query(Meeting).filter(Meeting.meeting_id == norm_id).first()
+    if not meeting:
+        meeting = db.query(Meeting).filter(Meeting.meeting_id == raw_id).first()
+    if not meeting and (norm_id == "635-012-0991" or raw_id.replace("-", "") == "6350120991"):
+        now = datetime.now()
+        meeting = Meeting(
+            meeting_id="635-012-0991",
+            title="atithi jaiman's Zoom Meeting",
+            description="Personal Meeting Room (Workplace Basic)",
+            scheduled_at=now,
+            duration_minutes=40,
+            invite_link=f"{FRONTEND_URL}/meeting/635-012-0991/lobby",
+            status="active",
+            host_id=1,
+            host_email="atithi@zoom.clone",
+            created_at=now,
+        )
+        db.add(meeting)
+        db.commit()
+        db.refresh(meeting)
+    return meeting
+
 @router.post("", response_model=MeetingResponse, status_code=status.HTTP_201_CREATED)
 def create_instant_meeting(payload: InstantMeetingCreate, db: Session = Depends(get_db)):
     """
     Creates an instant meeting:
     1. Generates unique Meeting ID.
     2. Builds invite link.
-    3. Saves meeting to SQLite with status='active'.
-    4. Automatically adds host as first participant.
+    3. Saves meeting to SQLite with status='active' and resolves host_id.
     """
     meeting_id = generate_meeting_id()
-    # Ensure uniqueness
     while db.query(Meeting).filter(Meeting.meeting_id == meeting_id).first():
         meeting_id = generate_meeting_id()
 
     invite_link = f"{FRONTEND_URL}/meeting/{meeting_id}/lobby"
-    now = datetime.now(timezone.utc)
+    now = datetime.now()
+
+    host_id = payload.host_id
+    host_email = payload.host_email
+    if not host_id and host_email:
+        u = db.query(User).filter(User.email == host_email.strip().lower()).first()
+        if u:
+            host_id = u.id
 
     meeting = Meeting(
         meeting_id=meeting_id,
@@ -60,6 +90,8 @@ def create_instant_meeting(payload: InstantMeetingCreate, db: Session = Depends(
         duration_minutes=45,
         invite_link=invite_link,
         status="active",
+        host_id=host_id,
+        host_email=host_email,
         created_at=now,
     )
     db.add(meeting)
@@ -72,19 +104,25 @@ def schedule_meeting(payload: ScheduledMeetingCreate, db: Session = Depends(get_
     """
     Schedules a meeting:
     1. Generates unique Meeting ID and invite link.
-    2. Persists to SQLite with status='scheduled'.
+    2. Persists naive local wall-clock datetime to SQLite with status='scheduled' and resolves host_id.
     """
     meeting_id = generate_meeting_id()
     while db.query(Meeting).filter(Meeting.meeting_id == meeting_id).first():
         meeting_id = generate_meeting_id()
 
     invite_link = f"{FRONTEND_URL}/meeting/{meeting_id}/lobby"
-    now = datetime.now(timezone.utc)
+    now = datetime.now()
 
-    # Ensure scheduled_at is naive UTC if timezone aware
     scheduled_dt = payload.scheduled_at
     if scheduled_dt.tzinfo is not None:
-        scheduled_dt = scheduled_dt.astimezone(timezone.utc).replace(tzinfo=None)
+        scheduled_dt = scheduled_dt.replace(tzinfo=None)
+
+    host_id = payload.host_id
+    host_email = payload.host_email
+    if not host_id and host_email:
+        u = db.query(User).filter(User.email == host_email.strip().lower()).first()
+        if u:
+            host_id = u.id
 
     meeting = Meeting(
         meeting_id=meeting_id,
@@ -94,7 +132,9 @@ def schedule_meeting(payload: ScheduledMeetingCreate, db: Session = Depends(get_
         duration_minutes=payload.duration_minutes,
         invite_link=invite_link,
         status="scheduled",
-        created_at=now.replace(tzinfo=None),
+        host_id=host_id,
+        host_email=host_email,
+        created_at=now,
     )
     db.add(meeting)
     db.commit()
@@ -102,43 +142,65 @@ def schedule_meeting(payload: ScheduledMeetingCreate, db: Session = Depends(get_
     return meeting
 
 @router.get("/upcoming", response_model=List[MeetingResponse])
-def get_upcoming_meetings(db: Session = Depends(get_db)):
+def get_upcoming_meetings(host_email: Optional[str] = None, db: Session = Depends(get_db)):
     """
-    Retrieve meetings scheduled for the future or currently marked scheduled.
-    Ordered by scheduled_at ascending.
+    Retrieve meetings currently scheduled, ordered by scheduled_at ascending.
+    If host_email is provided, only meetings created by this user are returned.
     """
-    meetings = (
-        db.query(Meeting)
-        .filter(Meeting.status == "scheduled")
-        .order_by(asc(Meeting.scheduled_at))
-        .all()
-    )
+    query = db.query(Meeting).filter(Meeting.status == "scheduled")
+    if host_email is not None:
+        query = query.filter(Meeting.host_email == host_email)
+    meetings = query.order_by(asc(Meeting.scheduled_at)).all()
     return meetings
 
 @router.get("/recent", response_model=List[MeetingResponse])
-def get_recent_meetings(db: Session = Depends(get_db)):
+def get_recent_meetings(host_email: Optional[str] = None, user_email: Optional[str] = None, db: Session = Depends(get_db)):
     """
-    Retrieve recent meetings (completed or active), ordered by creation/time descending.
+    Retrieve recently held/attended meetings, ordered by creation time descending.
+    Returns meetings hosted by the user OR attended by the user.
     """
-    meetings = (
-        db.query(Meeting)
-        .filter(Meeting.status.in_(["active", "completed"]))
-        .order_by(desc(Meeting.created_at))
-        .limit(20)
-        .all()
+    target_email = user_email or host_email
+    query = db.query(Meeting)
+    if target_email is not None:
+        clean_email = target_email.strip().lower()
+        # Find meeting IDs attended by this user from participants table
+        raw_attended = [
+            r[0] for r in db.query(Participant.meeting_id).filter(
+                func.lower(Participant.user_email) == clean_email
+            ).all()
+        ]
+        # Include both raw and normalized meeting IDs
+        attended_ids = set()
+        for mid in raw_attended:
+            if mid:
+                attended_ids.add(mid)
+                attended_ids.add(normalize_meeting_id(mid))
+                attended_ids.add(mid.replace("-", " "))
+
+        if attended_ids:
+            query = query.filter(
+                (func.lower(Meeting.host_email) == clean_email) | (Meeting.meeting_id.in_(list(attended_ids)))
+            )
+        else:
+            query = query.filter(func.lower(Meeting.host_email) == clean_email)
+
+    # Exclude unstarted scheduled future meetings from recent list
+    now = datetime.now()
+    query = query.filter(
+        (Meeting.status != "scheduled") | (Meeting.scheduled_at <= now)
     )
+    meetings = query.order_by(desc(Meeting.created_at)).limit(20).all()
     return meetings
 
 @router.get("/{meeting_id}/validate", response_model=MeetingValidateResponse)
 def validate_meeting(meeting_id: str, db: Session = Depends(get_db)):
     """
-    Validates whether a meeting exists in SQLite.
-    Returns 404 if not found so frontend can show clear error message.
+    Validates whether a meeting exists in SQLite and is currently joinable.
+    Returns host_id and host_email for client authorization.
     """
     norm_id = normalize_meeting_id(meeting_id)
     meeting = db.query(Meeting).filter(Meeting.meeting_id == norm_id).first()
     if not meeting:
-        # Also try raw
         meeting = db.query(Meeting).filter(Meeting.meeting_id == meeting_id).first()
     
     if not meeting:
@@ -147,13 +209,31 @@ def validate_meeting(meeting_id: str, db: Session = Depends(get_db)):
             detail=f"Meeting '{meeting_id}' does not exist or has expired. Please verify your Meeting ID or invite link."
         )
 
+    # 1. Reject if meeting has ended
+    if meeting.status == "completed":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This meeting has ended."
+        )
+
+    # 2. Reject if scheduled meeting has not reached start time
+    now = datetime.now()
+    if meeting.status == "scheduled" and meeting.scheduled_at and now < meeting.scheduled_at:
+        formatted_time = meeting.scheduled_at.strftime("%B %d, %I:%M %p")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"This meeting has not started yet. Scheduled for: {formatted_time}"
+        )
+
     return MeetingValidateResponse(
         exists=True,
         meeting_id=meeting.meeting_id,
         title=meeting.title,
         status=meeting.status,
         scheduled_at=meeting.scheduled_at,
-        duration_minutes=meeting.duration_minutes
+        duration_minutes=meeting.duration_minutes,
+        host_id=meeting.host_id,
+        host_email=meeting.host_email,
     )
 
 @router.get("/{meeting_id}", response_model=MeetingResponse)
@@ -178,6 +258,7 @@ def register_participant(
 ):
     """
     Register a participant when they enter the meeting room from the lobby.
+    Validates meeting status and start time, and securely assigns host/participant role.
     """
     norm_id = normalize_meeting_id(meeting_id)
     meeting = db.query(Meeting).filter(Meeting.meeting_id == norm_id).first()
@@ -189,17 +270,53 @@ def register_participant(
             detail=f"Meeting '{meeting_id}' not found."
         )
 
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    # 1. Reject if meeting ended
+    if meeting.status == "completed":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This meeting has ended."
+        )
+
+    # 2. Reject if scheduled meeting has not reached start time
+    now = datetime.now()
+    if meeting.status == "scheduled" and meeting.scheduled_at and now < meeting.scheduled_at:
+        formatted_time = meeting.scheduled_at.strftime("%B %d, %I:%M %p")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"This meeting has not started yet. Scheduled for: {formatted_time}"
+        )
+
+    # 3. Host role enforcement: only allow host role if matching meeting's host_id / host_email or authorized
+    existing_host = db.query(Participant).filter(
+        Participant.meeting_id == meeting.meeting_id,
+        Participant.role == "host"
+    ).first()
+
+    assigned_role = "participant"
+    if payload.role == "host":
+        is_owner = False
+        if meeting.host_email and payload.user_email:
+            is_owner = (meeting.host_email.strip().lower() == payload.user_email.strip().lower())
+        elif not existing_host or existing_host.session_id == payload.session_id:
+            if not meeting.host_email or not payload.user_email:
+                is_owner = True
+
+        if is_owner:
+            assigned_role = "host"
+        else:
+            assigned_role = "participant"
+
     participant = Participant(
         meeting_id=meeting.meeting_id,
         display_name=payload.display_name,
-        role=payload.role,
+        role=assigned_role,
         session_id=payload.session_id,
+        user_email=payload.user_email.strip().lower() if payload.user_email else None,
         joined_at=now
     )
     db.add(participant)
     
-    # If meeting was scheduled, mark it active now that someone joined
+    # If meeting was scheduled and start time has arrived, mark it active
     if meeting.status == "scheduled":
         meeting.status = "active"
 

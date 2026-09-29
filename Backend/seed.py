@@ -6,9 +6,9 @@ from datetime import datetime, timedelta, timezone
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from app.database import SessionLocal, engine, Base
-from app.models import Meeting, Participant
+from app.models import Meeting, Participant, User
 
-FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000").rstrip("/")
 
 def seed_initial_data(db=None):
     """Seed sample upcoming and recent meetings with participants into SQLite."""
@@ -58,6 +58,16 @@ def seed_initial_data(db=None):
                 invite_link=f"{FRONTEND_URL}/meeting/735-901-4428/lobby",
                 status="scheduled",
                 created_at=now - timedelta(hours=2),
+            ),
+            Meeting(
+                meeting_id="635-012-0991",
+                title="atithi jaiman's Zoom Meeting",
+                description="Personal Meeting Room (Workplace Basic)",
+                scheduled_at=now,
+                duration_minutes=40,
+                invite_link=f"{FRONTEND_URL}/meeting/635-012-0991/lobby",
+                status="active",
+                created_at=now - timedelta(days=5),
             ),
 
             # --- RECENT MEETINGS ---
@@ -132,6 +142,19 @@ def seed_initial_data(db=None):
         for p in sample_participants:
             db.add(p)
         db.commit()
+
+        # Seed default user if not present
+        if db.query(User).count() == 0:
+            import hashlib
+            pwd_hash = hashlib.sha256(("zoom_clone_secure_salt_2024" + "password123").encode("utf-8")).hexdigest()
+            u = User(
+                email="atithi@zoom.clone",
+                full_name="atithi jaiman",
+                password_hash=pwd_hash
+            )
+            db.add(u)
+            db.commit()
+            print("[Seed] Seeded default user: atithi@zoom.clone (atithi jaiman)")
 
         print("[Seed] Successfully seeded 3 upcoming meetings and 3 recent meetings with participants into SQLite!")
 

@@ -11,11 +11,13 @@ class Meeting(Base):
     meeting_id = Column(String(32), unique=True, index=True, nullable=False)
     title = Column(String(255), nullable=False, default="Quick Meeting")
     description = Column(Text, nullable=True)
-    scheduled_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    scheduled_at = Column(DateTime, nullable=False, default=datetime.now)
     duration_minutes = Column(Integer, nullable=False, default=30)
     invite_link = Column(String(512), nullable=False)
     status = Column(String(32), nullable=False, default="scheduled")  # scheduled | active | completed
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    host_id = Column(Integer, nullable=True, index=True)
+    host_email = Column(String(255), nullable=True, index=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.now)
 
     # 1-to-many relationship with participants
     participants = relationship(
@@ -33,7 +35,17 @@ class Participant(Base):
     display_name = Column(String(100), nullable=False)
     role = Column(String(32), nullable=False, default="participant")  # host | participant
     session_id = Column(String(64), nullable=False, index=True)
-    joined_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    user_email = Column(String(255), nullable=True, index=True)
+    joined_at = Column(DateTime, nullable=False, default=datetime.now)
 
     # Relationship back to meeting
     meeting = relationship("Meeting", back_populates="participants")
+
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    email = Column(String(255), unique=True, index=True, nullable=False)
+    full_name = Column(String(100), nullable=False, default="atithi jaiman")
+    password_hash = Column(String(255), nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.now)
