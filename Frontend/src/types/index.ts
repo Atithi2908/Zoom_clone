@@ -68,6 +68,8 @@ export type SignalMessageType =
   | 'toggle-video'
   | 'participant-state'
   | 'host_control'
+  | 'role_changed'
+  | 'room-joined'
   | 'meeting_ended'
   | 'end_meeting'
   | 'chat'
@@ -88,8 +90,15 @@ export interface SignalMessage {
   video?: boolean;
   is_audio_on?: boolean;
   is_video_on?: boolean;
-  action?: 'mute' | 'camera_off' | 'remove';
+  action?: 'mute' | 'camera_off' | 'remove' | 'make_host' | 'role_changed';
   target_session_id?: string;
+  promoted_session_id?: string;
+  demoted_session_id?: string;
+  previous_host_session_id?: string;
+  new_role?: 'host' | 'participant';
+  promoted_name?: string;
+  demoted_name?: string;
+  is_host?: boolean;
   text?: string;
   emoji?: string;
   timestamp?: string;

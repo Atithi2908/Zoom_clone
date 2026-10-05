@@ -525,43 +525,11 @@ function MeetingRoomContent() {
 
         switch (message.type) {
           // ─── Room joined event from server with authoritative is_host ───
-          case 'room-joined' as any: {
-            console.log('[Signaling] Server verified room-joined. is_host:', (message as any).is_host);
-            if (typeof (message as any).is_host === 'boolean') {
-              setIsHost((message as any).is_host);
+          case 'room-joined': {
+            console.log('[Signaling] Server verified room-joined. is_host:', message.is_host);
+            if (typeof message.is_host === 'boolean') {
+              setIsHost(message.is_host);
             }
-            break;
-          }
-
-          // ─── Role changed event: seamlessly updates role without touching WebRTC connections ───
-          case 'role_changed' as any: {
-            const promotedId = (message as any).promoted_session_id || (message as any).target_session_id;
-            const demotedId = (message as any).demoted_session_id;
-            console.log(`[Role Change] Promoted: ${promotedId}, Demoted: ${demotedId}`);
-
-            if (promotedId === sessionId) {
-              setIsHost(true);
-            }
-            if (demotedId === sessionId) {
-              setIsHost(false);
-            }
-
-            setRemoteParticipants((prev) => {
-              const updated = { ...prev };
-              if (promotedId && updated[promotedId]) {
-                updated[promotedId] = {
-                  ...updated[promotedId],
-                  role: 'host',
-                };
-              }
-              if (demotedId && updated[demotedId]) {
-                updated[demotedId] = {
-                  ...updated[demotedId],
-                  role: 'participant',
-                };
-              }
-              return updated;
-            });
             break;
           }
 
@@ -801,6 +769,7 @@ function MeetingRoomContent() {
           case 'role_changed': {
             const promotedId = message.promoted_session_id || message.target_session_id || message.session_id;
             const demotedId = message.demoted_session_id || message.previous_host_session_id;
+            console.log(`[Role Change] Promoted: ${promotedId}, Demoted: ${demotedId}`);
 
             // If local user was promoted to host
             if (promotedId === sessionId) {
