@@ -91,7 +91,7 @@ function LobbyContent() {
     async function setupPreview() {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
-          video: true,
+          video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } },
           audio: true,
         });
         activeStream = stream;
@@ -169,13 +169,18 @@ function LobbyContent() {
         localStream.getTracks().forEach((t) => t.stop());
       }
 
-      // Route directly into the WebRTC meeting room with session parameters
+      // Store initial user media choices safely in sessionStorage instead of exposing sensitive states in URL
+      if (typeof window !== 'undefined') {
+        sessionStorage.setItem(
+          `zoom_clone_media_${meetingId}`,
+          JSON.stringify({ audio: isAudioEnabled, video: isVideoEnabled })
+        );
+      }
+
+      // Route directly into the WebRTC meeting room without exposing role/audio/video in URL
       const queryParams = new URLSearchParams({
         session_id: sessionId,
         name: finalName,
-        role: assignedRole,
-        audio: isAudioEnabled ? '1' : '0',
-        video: isVideoEnabled ? '1' : '0',
       });
 
       router.push(`/meeting/${meetingId}?${queryParams.toString()}`);

@@ -39,6 +39,8 @@ export default function DashboardView() {
   const [showJoinModal, setShowJoinModal] = useState(false);
   const [joinMeetingIdInput, setJoinMeetingIdInput] = useState('');
   const [joinLoading, setJoinLoading] = useState(false);
+  const [showHostModal, setShowHostModal] = useState(false);
+  const [hostMeetingNameInput, setHostMeetingNameInput] = useState('');
 
   const personalMeetingId = '828 443 0991';
 
@@ -145,15 +147,27 @@ export default function DashboardView() {
     setTimeout(() => setCopiedInvitationId(null), 2000);
   };
 
-  const handleStartInstantMeeting = async () => {
+  const handleOpenHostModal = () => {
+    const hostName = user?.full_name || 'atithi jaiman';
+    setHostMeetingNameInput(`${hostName}'s Meeting`);
+    setShowHostModal(true);
+  };
+
+  const handleStartInstantMeeting = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const chosenTitle = hostMeetingNameInput.trim();
+    if (!chosenTitle) return;
+
     try {
       setIsCreatingInstant(true);
       const hostName = user?.full_name || 'atithi jaiman';
       const meeting = await api.createInstantMeeting({
-        title: `${hostName}'s Personal Meeting`,
+        title: chosenTitle,
+        host_name: hostName,
         host_email: user?.email || 'atithi@zoom.clone',
         host_id: user?.id,
       });
+      setShowHostModal(false);
       router.push(`/meeting/${meeting.meeting_id}/lobby?name=${encodeURIComponent(hostName)}`);
     } catch (err) {
       console.error('Failed to create instant meeting:', err);
@@ -290,7 +304,7 @@ export default function DashboardView() {
           </span>
 
           <div
-            onClick={handleStartInstantMeeting}
+            onClick={handleOpenHostModal}
             style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer', color: '#334155' }}
           >
             {isCreatingInstant ? <Loader2 size={15} className="animate-spin" /> : null}
@@ -977,7 +991,7 @@ export default function DashboardView() {
 
                 {/* Host */}
                 <div
-                  onClick={handleStartInstantMeeting}
+                  onClick={handleOpenHostModal}
                   style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', cursor: 'pointer' }}
                 >
                   <div
@@ -1234,6 +1248,70 @@ export default function DashboardView() {
                   {joinLoading ? <Loader2 size={16} className="animate-spin" /> : <span>Join</span>}
                 </button>
                 <button type="button" onClick={() => setShowJoinModal(false)} className="btn-secondary" style={{ flex: 1, justifyContent: 'center' }}>
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── Host Meeting Setup Modal ─────────────────────────────────────── */}
+      {showHostModal && (
+        <div className="modal-overlay">
+          <div className="modal-content" style={{ maxWidth: '440px', padding: '28px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div style={{ width: '36px', height: '36px', borderRadius: '10px', background: '#FF7426', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <Video size={20} />
+                </div>
+                <div>
+                  <h3 style={{ fontSize: '18px', fontWeight: 700, margin: 0 }}>Host a Meeting</h3>
+                  <p style={{ fontSize: '12px', color: '#64748B', margin: '2px 0 0 0' }}>Give your meeting a meaningful name</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowHostModal(false)}
+                style={{ border: 'none', background: 'none', cursor: 'pointer', color: '#64748B', padding: '4px' }}
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <form onSubmit={handleStartInstantMeeting}>
+              <div className="form-group" style={{ marginBottom: '20px' }}>
+                <label className="form-label" htmlFor="hostMeetingNameInput" style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: '#334155', marginBottom: '6px' }}>
+                  Meeting Name *
+                </label>
+                <input
+                  id="hostMeetingNameInput"
+                  type="text"
+                  className="form-input"
+                  placeholder="e.g. Juspay Interview Preparation, Team Discussion"
+                  value={hostMeetingNameInput}
+                  onChange={(e) => setHostMeetingNameInput(e.target.value)}
+                  autoFocus
+                  required
+                  style={{ width: '100%', boxSizing: 'border-box' }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <button
+                  type="submit"
+                  disabled={isCreatingInstant || !hostMeetingNameInput.trim()}
+                  className="btn-primary"
+                  style={{ flex: 1, justifyContent: 'center', background: '#FF7426' }}
+                >
+                  {isCreatingInstant ? <Loader2 size={16} className="animate-spin" /> : <span>Start Meeting</span>}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowHostModal(false)}
+                  className="btn-secondary"
+                  style={{ flex: 1, justifyContent: 'center' }}
+                >
                   Cancel
                 </button>
               </div>

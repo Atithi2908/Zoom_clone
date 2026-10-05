@@ -25,6 +25,8 @@ class SignalingManager:
         # meeting_id -> list of connected peer dicts:
         # [{"ws": WebSocket, "session_id": str, "display_name": str, "is_host": bool, "authenticated_email": Optional[str]}]
         self.rooms: Dict[str, List[dict]] = {}
+        # meeting_id -> set of removed session_ids to prevent unauthorized reconnection
+        self.removed_sessions: Dict[str, set] = {}
 
     def get_peer(self, meeting_id: str, session_id: str) -> Optional[dict]:
         if meeting_id in self.rooms:
@@ -169,6 +171,16 @@ async def websocket_signaling_endpoint(
     """
     norm_id = normalize_meeting_id(meeting_id)
 
+    # Check if this session was previously removed from this meeting
+    if session_id in manager.removed_sessions.get(norm_id, set()):
+        await websocket.accept()
+        await websocket.send_text(json.dumps({
+            "type": "error",
+            "message": "You were removed from this meeting and cannot rejoin."
+        }))
+        await websocket.close(code=4003, reason="Removed from meeting")
+        return
+
     # 1. Authenticate user from JWT token (query parameter or headers)
     auth_user_email: Optional[str] = None
     auth_user_id: Optional[int] = None
@@ -221,6 +233,11 @@ async def websocket_signaling_endpoint(
             await websocket.close(code=4002, reason="Meeting not started")
             return
 
+        # If meeting status was 'created', activate it upon first real connection
+        if meeting.status == "created":
+            meeting.status = "active"
+            db.commit()
+
         # 3. Server-side host determination: compare authenticated user with meeting host
         is_host = False
         actual_host_email = meeting.host_email.strip().lower() if meeting.host_email else None
@@ -267,13 +284,18 @@ async def websocket_signaling_endpoint(
             db.add(participant)
             db.commit()
 
+    is_audio_param = websocket.query_params.get("audio") != "0"
+    is_video_param = websocket.query_params.get("video") != "0"
+
     await manager.connect(
         websocket=websocket,
         meeting_id=norm_id,
         session_id=session_id,
         display_name=name,
         is_host=is_host,
-        authenticated_email=auth_user_email
+        authenticated_email=auth_user_email,
+        is_audio_on=is_audio_param,
+        is_video_on=is_video_param
     )
 
     try:
@@ -316,7 +338,7 @@ async def websocket_signaling_endpoint(
                 is_video = sender_peer.get("is_video_on", True) if sender_peer else (data.get("is_video_on") if "is_video_on" in data else data.get("video", True))
 
                 state_update = {
-                    "type": "participant-state",
+                    "type": msg_type if msg_type in ["toggle-audio", "toggle-video"] else "participant-state",
                     "session_id": session_id,
                     "from": session_id,
                     "sender_session_id": session_id,
@@ -327,7 +349,7 @@ async def websocket_signaling_endpoint(
                 }
                 await manager.broadcast_to_room(norm_id, session_id, state_update)
 
-            # 3. Host controls: mute, camera_off, remove
+            # 3. Host controls: mute, camera_off, remove, make_host
             # Verified server-side: authenticated sender, sender in room, sender is host, target in room
             elif msg_type == "host_control":
                 if not sender_peer or not sender_is_host:
@@ -335,10 +357,11 @@ async def websocket_signaling_endpoint(
                     continue
 
                 action = data.get("action")
-                if action not in ["mute", "camera_off", "remove"]:
+                if action not in ["mute", "camera_off", "remove", "make_host", "promote_to_host"]:
                     print(f"[SECURITY] Unrecognized host_control action '{action}'. Ignored.")
                     continue
 
+                target_peer = None
                 if target_session_id:
                     target_peer = manager.get_peer(norm_id, target_session_id)
                     if not target_peer:
@@ -346,6 +369,90 @@ async def websocket_signaling_endpoint(
                         continue
 
                 print(f"[HOST CONTROL] Verified host '{name}' executed '{action}' on target '{target_session_id}'")
+
+                # Handle participant removal: immediate cleanup & broadcast
+                if action == "remove":
+                    manager.removed_sessions.setdefault(norm_id, set()).add(target_session_id)
+                    with SessionLocal() as db:
+                        p_rec = db.query(Participant).filter(
+                            Participant.session_id == target_session_id
+                        ).first()
+                        if p_rec:
+                            db.delete(p_rec)
+                            db.commit()
+
+                    if target_peer:
+                        try:
+                            await target_peer["ws"].send_text(json.dumps({
+                                "type": "host_control",
+                                "action": "remove",
+                                "target_session_id": target_session_id,
+                                "message": "You were removed from this meeting by the host."
+                            }))
+                            await target_peer["ws"].close(code=4003, reason="Removed by host")
+                        except Exception as e:
+                            print(f"[WS] Error notifying/closing removed peer: {e}")
+
+                        if norm_id in manager.rooms:
+                            manager.rooms[norm_id] = [p for p in manager.rooms[norm_id] if p["session_id"] != target_session_id]
+
+                    # Broadcast removal to ALL remaining peers in the room immediately
+                    await manager.broadcast_all(norm_id, {
+                        "type": "peer-left",
+                        "session_id": target_session_id,
+                        "reason": "removed"
+                    })
+                    continue
+
+                # Handle promote participant to host: ONLY changes permissions & roles without disrupting WebRTC or media
+                elif action in ["make_host", "promote_to_host"]:
+                    if not target_peer:
+                        continue
+                    target_peer["is_host"] = True
+                    if sender_peer:
+                        sender_peer["is_host"] = False
+
+                    with SessionLocal() as db:
+                        t_part = db.query(Participant).filter(
+                            Participant.session_id == target_session_id
+                        ).first()
+                        if t_part:
+                            t_part.role = "host"
+                        s_part = db.query(Participant).filter(
+                            Participant.session_id == session_id
+                        ).first()
+                        if s_part:
+                            s_part.role = "participant"
+                        m = db.query(Meeting).filter(Meeting.meeting_id == norm_id).first()
+                        if m and target_peer.get("authenticated_email"):
+                            m.host_email = target_peer["authenticated_email"]
+                            target_u = db.query(User).filter(User.email == target_peer["authenticated_email"].strip().lower()).first()
+                            if target_u:
+                                m.host_id = target_u.id
+                        db.commit()
+
+                    # Broadcast role change to ALL peers in room without touching connections
+                    await manager.broadcast_all(norm_id, {
+                        "type": "role_changed",
+                        "action": "role_changed",
+                        "session_id": target_session_id,
+                        "role": "host",
+                        "promoted_session_id": target_session_id,
+                        "demoted_session_id": session_id,
+                        "previous_host_session_id": session_id,
+                        "target_session_id": target_session_id,
+                        "new_role": "host",
+                        "promoted_name": target_peer.get("display_name", "Participant"),
+                        "demoted_name": sender_peer.get("display_name", "Host") if sender_peer else "Host"
+                    })
+                    continue
+
+                # Mute or camera_off
+                if target_peer:
+                    if action == "mute":
+                        target_peer["is_audio_on"] = False
+                    elif action == "camera_off":
+                        target_peer["is_video_on"] = False
 
                 control_payload = {
                     "type": "host_control",

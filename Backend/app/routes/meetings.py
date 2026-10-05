@@ -189,6 +189,20 @@ def get_recent_meetings(host_email: Optional[str] = None, user_email: Optional[s
     query = query.filter(
         (Meeting.status != "scheduled") | (Meeting.scheduled_at <= now)
     )
+
+    # Require that the meeting was actually started/attended:
+    # Either status is 'completed', OR it has at least one participant record indicating attendance/start
+    attended_mids = [r[0] for r in db.query(Participant.meeting_id).distinct().all()]
+    all_attended_mids = set()
+    for mid in attended_mids:
+        if mid:
+            all_attended_mids.add(mid)
+            all_attended_mids.add(normalize_meeting_id(mid))
+            all_attended_mids.add(mid.replace("-", " "))
+
+    query = query.filter(
+        (Meeting.status == "completed") | (Meeting.meeting_id.in_(list(all_attended_mids)))
+    )
     meetings = query.order_by(desc(Meeting.created_at)).limit(20).all()
     return meetings
 
@@ -268,6 +282,13 @@ def register_participant(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Meeting '{meeting_id}' not found."
+        )
+
+    from .websocket import manager
+    if payload.session_id in manager.removed_sessions.get(norm_id, set()):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You were removed from this meeting and cannot rejoin."
         )
 
     # 1. Reject if meeting ended

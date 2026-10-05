@@ -110,7 +110,7 @@ export async function getLocalUserMedia(
   try {
     return await navigator.mediaDevices.getUserMedia({
       audio: true,
-      video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } },
+      video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } },
     });
   } catch (error) {
     console.warn('[WebRTC] Camera access failed, trying audio only:', error);

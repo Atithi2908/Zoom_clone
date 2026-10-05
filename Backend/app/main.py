@@ -10,7 +10,6 @@ from .routes import meetings, websocket, auth
 # Lifespan event to create tables and seed initial data automatically
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Create SQLite database tables if not created
     Base.metadata.create_all(bind=engine)
     yield
 

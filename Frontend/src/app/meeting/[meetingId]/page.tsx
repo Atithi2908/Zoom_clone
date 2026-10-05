@@ -24,6 +24,8 @@ import {
   Bell,
   Settings,
   Calendar,
+  Pin,
+  PinOff,
 } from 'lucide-react';
 import {
   createPeerConnection,
@@ -67,6 +69,8 @@ interface ParticipantVideoTileProps {
   isAudioOn: boolean;
   isVideoOn: boolean;
   stream: MediaStream | null;
+  isPinned?: boolean;
+  onTogglePin?: () => void;
 }
 
 function ParticipantVideoTile({
@@ -76,6 +80,8 @@ function ParticipantVideoTile({
   isAudioOn,
   isVideoOn,
   stream,
+  isPinned = false,
+  onTogglePin,
 }: ParticipantVideoTileProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
@@ -87,12 +93,17 @@ function ParticipantVideoTile({
       }
       videoRef.current.play().catch(() => {});
     }
+    return () => {
+      if (videoRef.current) {
+        videoRef.current.srcObject = null;
+      }
+    };
   }, [stream, isVideoOn]);
 
   const avatarBg = getAvatarColor(displayName);
 
   return (
-    <div className="video-tile">
+    <div className={`video-tile ${isPinned ? 'is-pinned-tile' : ''}`}>
       <video
         ref={videoRef}
         autoPlay
@@ -101,7 +112,10 @@ function ParticipantVideoTile({
         style={{
           width: '100%',
           height: '100%',
-          objectFit: 'cover',
+          maxHeight: '100%',
+          maxWidth: '100%',
+          objectFit: 'contain',
+          backgroundColor: '#0F0F14',
           transform: isLocal ? 'scaleX(-1)' : 'none',
           display: isVideoOn && stream ? 'block' : 'none',
         }}
@@ -112,6 +126,21 @@ function ParticipantVideoTile({
         <div className="avatar-fallback" style={{ background: avatarBg }}>
           {displayName.charAt(0).toUpperCase()}
         </div>
+      )}
+
+      {/* Pin toggle button on tile */}
+      {onTogglePin && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onTogglePin();
+          }}
+          className={`tile-pin-btn ${isPinned ? 'pinned' : ''}`}
+          title={isPinned ? 'Unpin participant' : 'Pin participant'}
+        >
+          {isPinned ? <PinOff size={13} /> : <Pin size={13} />}
+          <span>{isPinned ? 'Unpin' : 'Pin'}</span>
+        </button>
       )}
 
       {/* Name + mic status overlay */}
@@ -155,25 +184,46 @@ function MeetingRoomContent() {
   const sessionId =
     searchParams.get('session_id') || 'sess_' + Math.random().toString(36).substring(2, 9);
   const displayName = searchParams.get('name') || 'Participant';
-  const role = (searchParams.get('role') || 'participant') as 'host' | 'participant';
-  const initialAudio = searchParams.get('audio') !== '0';
-  const initialVideo = searchParams.get('video') !== '0';
+
+  // Read media preferences safely from sessionStorage with URL query fallback
+  let storedAudio = true;
+  let storedVideo = true;
+  if (typeof window !== 'undefined') {
+    try {
+      const stored = sessionStorage.getItem(`zoom_clone_media_${meetingId}`);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (typeof parsed.audio === 'boolean') storedAudio = parsed.audio;
+        if (typeof parsed.video === 'boolean') storedVideo = parsed.video;
+      }
+    } catch {}
+  }
+  const initialAudio = searchParams.has('audio') ? searchParams.get('audio') !== '0' : storedAudio;
+  const initialVideo = searchParams.has('video') ? searchParams.get('video') !== '0' : storedVideo;
+
   // Real host status: verified server-side via API and WebSocket room-joined
   const [isHost, setIsHost] = useState(false);
+  const [meetingTitle, setMeetingTitle] = useState('Zoom Meeting');
+  const [pinnedParticipantId, setPinnedParticipantId] = useState<string | null>(null);
 
   useEffect(() => {
     let isMounted = true;
     async function verifyHostStatus() {
       try {
         const meetingInfo = await api.validateMeeting(meetingId);
-        const curUser = typeof window !== 'undefined' ? JSON.parse(localStorage.getItem('zoom_clone_user') || 'null') : null;
-        if (isMounted && curUser && meetingInfo) {
-          const isOwner = Boolean(
-            (meetingInfo.host_id && curUser.id === meetingInfo.host_id) ||
-            (meetingInfo.host_email && curUser.email?.toLowerCase() === meetingInfo.host_email?.toLowerCase())
-          );
-          if (isOwner) {
-            setIsHost(true);
+        if (isMounted && meetingInfo) {
+          if (meetingInfo.title) {
+            setMeetingTitle(meetingInfo.title);
+          }
+          const curUser = typeof window !== 'undefined' ? JSON.parse(localStorage.getItem('zoom_clone_user') || 'null') : null;
+          if (curUser) {
+            const isOwner = Boolean(
+              (meetingInfo.host_id && curUser.id === meetingInfo.host_id) ||
+              (meetingInfo.host_email && curUser.email?.toLowerCase() === meetingInfo.host_email?.toLowerCase())
+            );
+            if (isOwner) {
+              setIsHost(true);
+            }
           }
         }
       } catch (e) {
@@ -255,6 +305,7 @@ function MeetingRoomContent() {
   const iceQueuesRef = useRef<Record<string, RTCIceCandidateInit[]>>({});
   const socketRef = useRef<WebSocket | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
+  const removedPeersRef = useRef<Set<string>>(new Set());
 
   // Refs mirror state for use inside WebSocket event handlers (avoid stale closures)
   const isAudioOnRef = useRef(initialAudio);
@@ -326,7 +377,7 @@ function MeetingRoomContent() {
         },
         // onIceCandidate: send this peer's ICE candidate only to the matching remote peer
         (candidate: RTCIceCandidate) => {
-          if (socketRef.current?.readyState === WebSocket.OPEN) {
+          if (socketRef.current?.readyState === WebSocket.OPEN && !removedPeersRef.current.has(peerId)) {
             socketRef.current.send(
               JSON.stringify({
                 type: 'ice-candidate',
@@ -354,23 +405,47 @@ function MeetingRoomContent() {
   // ── Close & cleanup a single peer connection ─────────────────────────────
   const cleanupPeer = useCallback((peerId: string) => {
     console.log(`[WebRTC] Cleaning up peer: ${peerId}`);
+    removedPeersRef.current.add(peerId);
+
     if (peerConnectionsRef.current[peerId]) {
-      peerConnectionsRef.current[peerId].close();
+      const pc = peerConnectionsRef.current[peerId];
+      try {
+        pc.getSenders().forEach((s) => {
+          try { pc.removeTrack(s); } catch {}
+        });
+        pc.getTransceivers().forEach((t) => {
+          try { t.stop(); } catch {}
+        });
+        pc.close();
+      } catch (err) {
+        console.warn(`[WebRTC] Error closing pc for ${peerId}:`, err);
+      }
       delete peerConnectionsRef.current[peerId];
     }
     delete iceQueuesRef.current[peerId];
-    delete remoteStreamsRef.current[peerId];
+
+    if (remoteStreamsRef.current[peerId]) {
+      try {
+        remoteStreamsRef.current[peerId].getTracks().forEach((t) => {
+          try { t.stop(); } catch {}
+        });
+      } catch {}
+      delete remoteStreamsRef.current[peerId];
+    }
 
     setRemoteParticipants((prev) => {
+      if (!prev[peerId]) return prev;
       const updated = { ...prev };
       delete updated[peerId];
       return updated;
     });
     setRemoteStreams((prev) => {
+      if (!prev[peerId]) return prev;
       const updated = { ...prev };
       delete updated[peerId];
       return updated;
     });
+    setPinnedParticipantId((prev) => (prev === peerId ? null : prev));
   }, []);
 
   // ─── Broadcast my current state to all peers ─────────────────────────────
@@ -423,9 +498,11 @@ function MeetingRoomContent() {
       // Step 2: Connect to WebSocket signaling server
       const authToken = typeof window !== 'undefined' ? localStorage.getItem('zoom_clone_token') || '' : '';
       const tokenParam = authToken ? `&token=${encodeURIComponent(authToken)}` : '';
+      const audioParam = initialAudio ? '1' : '0';
+      const videoParam = initialVideo ? '1' : '0';
       const wsUrl = `${
         process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000'
-      }/ws/meeting/${meetingId}?session_id=${sessionId}&name=${encodeURIComponent(displayName)}&role=${role}${tokenParam}`;
+      }/ws/meeting/${meetingId}?session_id=${sessionId}&name=${encodeURIComponent(displayName)}&audio=${audioParam}&video=${videoParam}${tokenParam}`;
       ws = new WebSocket(wsUrl);
       socketRef.current = ws;
 
@@ -440,6 +517,12 @@ function MeetingRoomContent() {
         // The sender is identified by sender_session_id OR the legacy `from` field
         const remotePeerId = message.sender_session_id || message.from;
 
+        // Immediately drop any messages from peers that have been removed
+        if (remotePeerId && removedPeersRef.current.has(remotePeerId)) {
+          console.log(`[Signaling] Dropping in-flight message from removed peer ${remotePeerId}`);
+          return;
+        }
+
         switch (message.type) {
           // ─── Room joined event from server with authoritative is_host ───
           case 'room-joined' as any: {
@@ -450,10 +533,42 @@ function MeetingRoomContent() {
             break;
           }
 
+          // ─── Role changed event: seamlessly updates role without touching WebRTC connections ───
+          case 'role_changed' as any: {
+            const promotedId = (message as any).promoted_session_id || (message as any).target_session_id;
+            const demotedId = (message as any).demoted_session_id;
+            console.log(`[Role Change] Promoted: ${promotedId}, Demoted: ${demotedId}`);
+
+            if (promotedId === sessionId) {
+              setIsHost(true);
+            }
+            if (demotedId === sessionId) {
+              setIsHost(false);
+            }
+
+            setRemoteParticipants((prev) => {
+              const updated = { ...prev };
+              if (promotedId && updated[promotedId]) {
+                updated[promotedId] = {
+                  ...updated[promotedId],
+                  role: 'host',
+                };
+              }
+              if (demotedId && updated[demotedId]) {
+                updated[demotedId] = {
+                  ...updated[demotedId],
+                  role: 'participant',
+                };
+              }
+              return updated;
+            });
+            break;
+          }
+
           // ─── A: New peer joined — we (existing peer) initiate the offer ───
           case 'peer-joined': {
             const newPeerId = message.session_id;
-            if (!newPeerId || newPeerId === sessionId) return;
+            if (!newPeerId || newPeerId === sessionId || removedPeersRef.current.has(newPeerId)) return;
 
             console.log(`[Signaling] Peer joined: ${message.display_name} (${newPeerId})`);
 
@@ -479,7 +594,7 @@ function MeetingRoomContent() {
                   target_session_id: newPeerId,
                   sender_session_id: sessionId,
                   sender_name: displayName,
-                  role: role,
+                  role: isHost ? 'host' : 'participant',
                   sdp: offer,
                 })
               );
@@ -494,7 +609,7 @@ function MeetingRoomContent() {
           //        The newcomer does NOT initiate offers — they wait for offers.
           case 'existing-peer': {
             const existId = message.session_id;
-            if (!existId || existId === sessionId) return;
+            if (!existId || existId === sessionId || removedPeersRef.current.has(existId)) return;
 
             console.log(`[Signaling] Existing peer discovered: ${message.display_name} (${existId})`);
             setRemoteParticipants((prev) => ({
@@ -541,7 +656,7 @@ function MeetingRoomContent() {
                   target_session_id: remotePeerId,
                   sender_session_id: sessionId,
                   sender_name: displayName,
-                  role: role,
+                  role: isHost ? 'host' : 'participant',
                   sdp: answer,
                 })
               );
@@ -682,6 +797,40 @@ function MeetingRoomContent() {
             break;
           }
 
+          // ─── G4: Role changed (participant promoted to host or demoted) ──
+          case 'role_changed': {
+            const promotedId = message.promoted_session_id || message.target_session_id || message.session_id;
+            const demotedId = message.demoted_session_id || message.previous_host_session_id;
+
+            // If local user was promoted to host
+            if (promotedId === sessionId) {
+              setIsHost(true);
+            }
+            // If local user was demoted to participant
+            if (demotedId === sessionId) {
+              setIsHost(false);
+            }
+
+            // Update remote participants role metadata WITHOUT touching peer connections or media tracks
+            setRemoteParticipants((prev) => {
+              const updated = { ...prev };
+              if (promotedId && updated[promotedId]) {
+                updated[promotedId] = {
+                  ...updated[promotedId],
+                  role: 'host',
+                };
+              }
+              if (demotedId && updated[demotedId]) {
+                updated[demotedId] = {
+                  ...updated[demotedId],
+                  role: 'participant',
+                };
+              }
+              return updated;
+            });
+            break;
+          }
+
           // ─── H: A participant left voluntarily or was removed ────────────
           //        Clean up ONLY that peer — do NOT affect others
           case 'peer-left': {
@@ -808,7 +957,10 @@ function MeetingRoomContent() {
    * The target's state is NOT touched here — the target updates themselves and
    * broadcasts their new state via participant-state.
    */
-  const sendHostControl = (targetSessionId: string, action: 'mute' | 'camera_off' | 'remove') => {
+  const sendHostControl = (
+    targetSessionId: string,
+    action: 'mute' | 'camera_off' | 'remove' | 'make_host'
+  ) => {
     if (!isHost || socketRef.current?.readyState !== WebSocket.OPEN) return;
     console.log(`[Host Control] ${action} → ${targetSessionId}`);
     socketRef.current.send(
@@ -818,6 +970,15 @@ function MeetingRoomContent() {
         target_session_id: targetSessionId,
       })
     );
+  };
+
+  const handleRemoveParticipant = (targetSessionId: string) => {
+    if (!isHost) return;
+    removedPeersRef.current.add(targetSessionId);
+    // 1. Send WebSocket removal command to backend
+    sendHostControl(targetSessionId, 'remove');
+    // 2. Immediately cleanup locally so UI removes participant in a single click
+    cleanupPeer(targetSessionId);
   };
 
   // ── End meeting for everyone (host only) ─────────────────────────────────
@@ -1026,7 +1187,7 @@ function MeetingRoomContent() {
           <header className="room-header">
             <div className="room-title-box">
               <Shield size={16} color="#10B981" style={{ flexShrink: 0 }} />
-              <span style={{ fontWeight: 600 }}>{displayName}&apos;s Zoom Meeting</span>
+              <span style={{ fontWeight: 600 }}>{meetingTitle || `${displayName}'s Zoom Meeting`}</span>
               <span className="room-divider">|</span>
               <span className="room-muted">ID: {meetingId}</span>
               <span className="room-divider">|</span>
@@ -1047,32 +1208,128 @@ function MeetingRoomContent() {
           <div className="room-body">
             {/* Video Grid Stage */}
             <main className={`room-stage${totalCount === 1 ? ' solo' : ''}`}>
-              <div className={`video-grid ${gridClass}`}>
-                {/* Local tile (You) */}
-                <ParticipantVideoTile
-                  participantId="local"
-                  displayName={displayName}
-                  role={isHost ? 'host' : 'participant'}
-                  isLocal={true}
-                  isAudioOn={isAudioOn}
-                  isVideoOn={isVideoOn}
-                  stream={localStream}
-                />
+              {pinnedParticipantId ? (
+                <div className="pinned-stage-layout">
+                  {/* Primary / Pinned Video Area */}
+                  <div className="pinned-primary-area">
+                    {pinnedParticipantId === 'local' ? (
+                      <ParticipantVideoTile
+                        participantId="local"
+                        displayName={displayName}
+                        role={isHost ? 'host' : 'participant'}
+                        isLocal={true}
+                        isAudioOn={isAudioOn}
+                        isVideoOn={isVideoOn}
+                        stream={localStream}
+                        isPinned={true}
+                        onTogglePin={() => setPinnedParticipantId(null)}
+                      />
+                    ) : (
+                      (() => {
+                        const pinnedPeer = remoteParticipants[pinnedParticipantId];
+                        if (pinnedPeer) {
+                          return (
+                            <ParticipantVideoTile
+                              participantId={pinnedPeer.sessionId}
+                              displayName={pinnedPeer.displayName}
+                              role={pinnedPeer.role}
+                              isLocal={false}
+                              isAudioOn={pinnedPeer.isAudioOn}
+                              isVideoOn={pinnedPeer.isVideoOn}
+                              stream={remoteStreams[pinnedPeer.sessionId] || null}
+                              isPinned={true}
+                              onTogglePin={() => setPinnedParticipantId(null)}
+                            />
+                          );
+                        } else {
+                          return (
+                            <ParticipantVideoTile
+                              participantId="local"
+                              displayName={displayName}
+                              role={isHost ? 'host' : 'participant'}
+                              isLocal={true}
+                              isAudioOn={isAudioOn}
+                              isVideoOn={isVideoOn}
+                              stream={localStream}
+                              isPinned={false}
+                              onTogglePin={() => setPinnedParticipantId('local')}
+                            />
+                          );
+                        }
+                      })()
+                    )}
+                  </div>
 
-                {/* Remote participant tiles */}
-                {remoteList.map((participant) => (
+                  {/* Strip of Thumbnails for other participants (only if more than 1 participant) */}
+                  {totalCount > 1 && (
+                    <div className="pinned-thumbnails-strip">
+                      {pinnedParticipantId !== 'local' && (
+                        <div className="pinned-thumb-item">
+                          <ParticipantVideoTile
+                            participantId="local"
+                            displayName={displayName}
+                            role={isHost ? 'host' : 'participant'}
+                            isLocal={true}
+                            isAudioOn={isAudioOn}
+                            isVideoOn={isVideoOn}
+                            stream={localStream}
+                            isPinned={false}
+                            onTogglePin={() => setPinnedParticipantId('local')}
+                          />
+                        </div>
+                      )}
+                      {remoteList
+                        .filter((p) => p.sessionId !== pinnedParticipantId)
+                        .map((participant) => (
+                          <div key={participant.sessionId} className="pinned-thumb-item">
+                            <ParticipantVideoTile
+                              participantId={participant.sessionId}
+                              displayName={participant.displayName}
+                              role={participant.role}
+                              isLocal={false}
+                              isAudioOn={participant.isAudioOn}
+                              isVideoOn={participant.isVideoOn}
+                              stream={remoteStreams[participant.sessionId] || null}
+                              isPinned={false}
+                              onTogglePin={() => setPinnedParticipantId(participant.sessionId)}
+                            />
+                          </div>
+                        ))}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className={`video-grid ${gridClass}`}>
+                  {/* Local tile (You) */}
                   <ParticipantVideoTile
-                    key={participant.sessionId}
-                    participantId={participant.sessionId}
-                    displayName={participant.displayName}
-                    role={participant.role}
-                    isLocal={false}
-                    isAudioOn={participant.isAudioOn}
-                    isVideoOn={participant.isVideoOn}
-                    stream={remoteStreams[participant.sessionId] || null}
+                    participantId="local"
+                    displayName={displayName}
+                    role={isHost ? 'host' : 'participant'}
+                    isLocal={true}
+                    isAudioOn={isAudioOn}
+                    isVideoOn={isVideoOn}
+                    stream={localStream}
+                    isPinned={false}
+                    onTogglePin={() => setPinnedParticipantId('local')}
                   />
-                ))}
-              </div>
+
+                  {/* Remote participant tiles */}
+                  {remoteList.map((participant) => (
+                    <ParticipantVideoTile
+                      key={participant.sessionId}
+                      participantId={participant.sessionId}
+                      displayName={participant.displayName}
+                      role={participant.role}
+                      isLocal={false}
+                      isAudioOn={participant.isAudioOn}
+                      isVideoOn={participant.isVideoOn}
+                      stream={remoteStreams[participant.sessionId] || null}
+                      isPinned={false}
+                      onTogglePin={() => setPinnedParticipantId(participant.sessionId)}
+                    />
+                  ))}
+                </div>
+              )}
 
               {/* Floating Reaction Emojis on Stage */}
               {floatingReactions.map((r) => (
@@ -1144,6 +1401,16 @@ function MeetingRoomContent() {
                         {isVideoOn ? <Video size={15} color="#CBD5E1" /> : <VideoOff size={15} color="#EF4444" />}
                       </div>
                     </div>
+                    <div className="participant-item-actions">
+                      <button
+                        className={`host-action-btn ${pinnedParticipantId === 'local' ? 'pinned' : ''}`}
+                        onClick={() => setPinnedParticipantId(pinnedParticipantId === 'local' ? null : 'local')}
+                        title={pinnedParticipantId === 'local' ? 'Unpin' : 'Pin'}
+                      >
+                        {pinnedParticipantId === 'local' ? <PinOff size={12} /> : <Pin size={12} />}
+                        <span>{pinnedParticipantId === 'local' ? 'Unpin' : 'Pin'}</span>
+                      </button>
+                    </div>
                   </div>
 
                   {remoteList.length > 0 && (
@@ -1184,34 +1451,53 @@ function MeetingRoomContent() {
                         </div>
                       </div>
 
-                      {isHost && p.role !== 'host' && (
-                        <div className="participant-item-actions">
-                          <button
-                            className="host-action-btn"
-                            onClick={() => sendHostControl(p.sessionId, 'mute')}
-                            title={`Mute ${p.displayName}`}
-                          >
-                            <MicOff size={12} />
-                            <span>Mute</span>
-                          </button>
-                          <button
-                            className="host-action-btn"
-                            onClick={() => sendHostControl(p.sessionId, 'camera_off')}
-                            title={`Turn off ${p.displayName}'s camera`}
-                          >
-                            <VideoOff size={12} />
-                            <span>Cam Off</span>
-                          </button>
-                          <button
-                            className="host-action-btn remove"
-                            onClick={() => sendHostControl(p.sessionId, 'remove')}
-                            title={`Remove ${p.displayName}`}
-                          >
-                            <X size={12} />
-                            <span>Remove</span>
-                          </button>
-                        </div>
-                      )}
+                      <div className="participant-item-actions">
+                        <button
+                          className={`host-action-btn ${pinnedParticipantId === p.sessionId ? 'pinned' : ''}`}
+                          onClick={() => setPinnedParticipantId(pinnedParticipantId === p.sessionId ? null : p.sessionId)}
+                          title={pinnedParticipantId === p.sessionId ? 'Unpin' : 'Pin'}
+                        >
+                          {pinnedParticipantId === p.sessionId ? <PinOff size={12} /> : <Pin size={12} />}
+                          <span>{pinnedParticipantId === p.sessionId ? 'Unpin' : 'Pin'}</span>
+                        </button>
+
+                        {isHost && p.role !== 'host' && (
+                          <>
+                            <button
+                              className="host-action-btn make-host"
+                              onClick={() => sendHostControl(p.sessionId, 'make_host')}
+                              title={`Make ${p.displayName} Host`}
+                            >
+                              <Shield size={12} />
+                              <span>Make Host</span>
+                            </button>
+                            <button
+                              className="host-action-btn"
+                              onClick={() => sendHostControl(p.sessionId, 'mute')}
+                              title={`Mute ${p.displayName}`}
+                            >
+                              <MicOff size={12} />
+                              <span>Mute</span>
+                            </button>
+                            <button
+                              className="host-action-btn"
+                              onClick={() => sendHostControl(p.sessionId, 'camera_off')}
+                              title={`Turn off ${p.displayName}'s camera`}
+                            >
+                              <VideoOff size={12} />
+                              <span>Cam Off</span>
+                            </button>
+                            <button
+                              className="host-action-btn remove"
+                              onClick={() => handleRemoveParticipant(p.sessionId)}
+                              title={`Remove ${p.displayName}`}
+                            >
+                              <X size={12} />
+                              <span>Remove</span>
+                            </button>
+                          </>
+                        )}
+                      </div>
                     </div>
                   ))}
                 </div>

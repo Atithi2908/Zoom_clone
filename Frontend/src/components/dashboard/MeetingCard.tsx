@@ -67,7 +67,7 @@ export default function MeetingCard({ meeting, isRecent = false }: MeetingCardPr
         </button>
 
         <Link
-          href={`/meeting/${meeting.meeting_id}/lobby${isRecent ? '' : '?host=true'}`}
+          href={`/meeting/${meeting.meeting_id}/lobby`}
           className="btn-primary"
         >
           <Video size={16} />
