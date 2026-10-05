@@ -148,7 +148,7 @@ export default function DashboardView() {
   };
 
   const handleOpenHostModal = () => {
-    const hostName = user?.full_name || 'atithi jaiman';
+    const hostName = user?.full_name || 'Atithi';
     setHostMeetingNameInput(`${hostName}'s Meeting`);
     setShowHostModal(true);
   };
@@ -160,7 +160,7 @@ export default function DashboardView() {
 
     try {
       setIsCreatingInstant(true);
-      const hostName = user?.full_name || 'atithi jaiman';
+      const hostName = user?.full_name || 'Atithi';
       const meeting = await api.createInstantMeeting({
         title: chosenTitle,
         host_name: hostName,
@@ -206,28 +206,10 @@ export default function DashboardView() {
   };
 
   const curUser = user || (typeof window !== 'undefined' ? auth.getCurrentUser() : null);
-  const displayName = curUser?.full_name || 'atithi jaiman';
+  const displayName = curUser?.full_name || 'Atithi';
   const displayEmail = curUser?.email || 'atithi@zoom.clone';
-  // Check if current user is the initial demo account (atithi) or guest viewing demo
-  const isAtithiUser = !curUser || displayEmail.toLowerCase() === 'atithi@zoom.clone';
 
-  // Format meetings list:
-  // If user is atithi and has 0 backend meetings, show the default demo meeting from screenshot
-  // If new user and has 0 backend meetings, show empty list!
   const meetingsToShow = [...upcomingMeetings];
-  if (isAtithiUser && meetingsToShow.length === 0) {
-    meetingsToShow.push({
-      id: 999999,
-      meeting_id: '845 4875 7459',
-      title: 'My Meeting',
-      description: 'Scheduled recurring sync',
-      scheduled_at: new Date().toISOString(),
-      duration_minutes: 40,
-      invite_link: `${typeof window !== 'undefined' ? window.location.origin : ''}/meeting/845-4875-7459/lobby`,
-      status: 'scheduled',
-      created_at: new Date().toISOString(),
-    });
-  }
 
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#FFFFFF', color: '#1E293B', display: 'flex', flexDirection: 'column', fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif' }}>
@@ -832,75 +814,8 @@ export default function DashboardView() {
                     );
                   })}
                 </div>
-              ) : isAtithiUser ? (
-                /* Atithi's Activity from screenshot */
-                <div
-                  style={{
-                    backgroundColor: '#FFFFFF',
-                    borderRadius: '12px',
-                    border: '1px solid #E2E8F0',
-                    padding: '18px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    boxShadow: '0 1px 3px rgba(0,0,0,0.02)',
-                  }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                    {/* Whiteboard Doodle preview */}
-                    <div
-                      style={{
-                        width: '90px',
-                        height: '68px',
-                        backgroundColor: '#FAFAFA',
-                        border: '1px solid #E2E8F0',
-                        borderRadius: '8px',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        flexShrink: 0,
-                      }}
-                    >
-                      <svg width="48" height="40" viewBox="0 0 48 40" fill="none" stroke="#94A3B8" strokeWidth="1.5">
-                        <path d="M6 20 C 14 5, 26 35, 34 15 C 40 5, 44 28, 44 28" />
-                        <circle cx="20" cy="20" r="10" strokeDasharray="2 2" />
-                      </svg>
-                    </div>
-
-                    <div>
-                      <div style={{ fontSize: '14px', fontWeight: 600, color: '#0E71EB', cursor: 'pointer' }}>
-                        Dikshika&apos;s Personal Meeting Room 2024-04-10 12:45 AM
-                      </div>
-                      <div style={{ fontSize: '12px', color: '#64748B', marginTop: '3px', marginBottom: '8px' }}>
-                        modified on Apr 10, 2024 by atithi jaiman
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <div style={{ width: '18px', height: '18px', borderRadius: '50%', backgroundColor: '#8B5CF6', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '9px', fontWeight: 700 }}>
-                          aj
-                        </div>
-                        <Users size={12} color="#64748B" />
-                        <span
-                          style={{
-                            backgroundColor: '#FFF1EE',
-                            color: '#EA580C',
-                            fontSize: '11px',
-                            fontWeight: 600,
-                            padding: '1px 8px',
-                            borderRadius: '10px',
-                          }}
-                        >
-                          Whiteboard
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <button style={{ color: '#94A3B8', border: 'none', background: 'none', cursor: 'pointer', padding: '6px' }}>
-                    <MoreHorizontal size={18} />
-                  </button>
-                </div>
               ) : (
-                /* New user: Empty State */
+                /* Empty State */
                 <div
                   style={{
                     backgroundColor: '#FFFFFF',

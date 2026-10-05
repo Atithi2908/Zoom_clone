@@ -68,7 +68,7 @@ class MeetingValidateResponse(BaseModel):
 class UserSignUp(BaseModel):
     email: str
     password: str
-    full_name: Optional[str] = "atithi jaiman"
+    full_name: Optional[str] = "Atithi"
 
 class UserSignIn(BaseModel):
     email: str

@@ -15,7 +15,7 @@ export default function ActionCards() {
 
   const handleOpenHostModal = () => {
     const curUser = auth.getCurrentUser();
-    const hostName = curUser?.full_name || 'Atithi (Host)';
+    const hostName = curUser?.full_name || 'Atithi';
     setMeetingNameInput(`${hostName}'s Meeting`);
     setShowHostModal(true);
   };
@@ -29,7 +29,7 @@ export default function ActionCards() {
       setIsCreating(true);
       setErrorMsg(null);
       const curUser = auth.getCurrentUser();
-      const hostName = curUser?.full_name || 'Atithi (Host)';
+      const hostName = curUser?.full_name || 'Atithi';
       const meeting = await api.createInstantMeeting({
         title: chosenName,
         host_name: hostName,

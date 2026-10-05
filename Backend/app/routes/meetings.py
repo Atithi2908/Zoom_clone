@@ -35,29 +35,12 @@ def normalize_meeting_id(raw_id: str) -> str:
         return f"{cleaned[:3]}-{cleaned[3:6]}-{cleaned[6:]}"
     return raw_id.strip()
 
-def get_or_create_meeting(db: Session, raw_id: str) -> Meeting:
-    """Find meeting by normalized or raw ID, auto-provisioning PMI if needed."""
+def get_or_create_meeting(db: Session, raw_id: str) -> Optional[Meeting]:
+    """Find meeting by normalized or raw ID."""
     norm_id = normalize_meeting_id(raw_id)
     meeting = db.query(Meeting).filter(Meeting.meeting_id == norm_id).first()
     if not meeting:
         meeting = db.query(Meeting).filter(Meeting.meeting_id == raw_id).first()
-    if not meeting and (norm_id == "635-012-0991" or raw_id.replace("-", "") == "6350120991"):
-        now = datetime.now()
-        meeting = Meeting(
-            meeting_id="635-012-0991",
-            title="atithi jaiman's Zoom Meeting",
-            description="Personal Meeting Room (Workplace Basic)",
-            scheduled_at=now,
-            duration_minutes=40,
-            invite_link=f"{FRONTEND_URL}/meeting/635-012-0991/lobby",
-            status="active",
-            host_id=1,
-            host_email="atithi@zoom.clone",
-            created_at=now,
-        )
-        db.add(meeting)
-        db.commit()
-        db.refresh(meeting)
     return meeting
 
 @router.post("", response_model=MeetingResponse, status_code=status.HTTP_201_CREATED)

@@ -46,6 +46,6 @@ class User(Base):
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     email = Column(String(255), unique=True, index=True, nullable=False)
-    full_name = Column(String(100), nullable=False, default="atithi jaiman")
+    full_name = Column(String(100), nullable=False, default="Atithi")
     password_hash = Column(String(255), nullable=False)
     created_at = Column(DateTime, nullable=False, default=datetime.now)

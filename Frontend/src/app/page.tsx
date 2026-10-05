@@ -6,9 +6,11 @@ import DashboardView from '@/components/dashboard/DashboardView';
 import { auth } from '@/lib/auth';
 
 export default function RootHomePage() {
-  const [isAuth, setIsAuth] = useState<boolean | null>(null);
+  const [mounted, setMounted] = useState(false);
+  const [isAuth, setIsAuth] = useState(false);
 
   useEffect(() => {
+    setMounted(true);
     setIsAuth(auth.isAuthenticated());
 
     const handleAuthChange = () => {
@@ -19,9 +21,9 @@ export default function RootHomePage() {
     return () => window.removeEventListener('auth-change', handleAuthChange);
   }, []);
 
-  // During SSR or initial mount
-  if (isAuth === null) {
-    return <LandingPage />;
+  // During initial mount before hydration, render neutral container to avoid flash
+  if (!mounted) {
+    return <div style={{ minHeight: '100vh', backgroundColor: '#FFFFFF' }} />;
   }
 
   return isAuth ? <DashboardView /> : <LandingPage />;

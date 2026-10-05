@@ -81,7 +81,7 @@ def signup(payload: UserSignUp, db: Session = Depends(get_db)):
     if existing:
         raise HTTPException(status_code=400, detail="An account with this email already exists.")
 
-    name = payload.full_name.strip() if payload.full_name and payload.full_name.strip() else "atithi jaiman"
+    name = payload.full_name.strip() if payload.full_name and payload.full_name.strip() else "Atithi"
 
     user = User(
         email=email,

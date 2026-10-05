@@ -336,7 +336,7 @@ export default function LandingPage() {
                 <div style={{ width: '11px', height: '11px', borderRadius: '50%', backgroundColor: '#F59E0B' }} />
                 <div style={{ width: '11px', height: '11px', borderRadius: '50%', backgroundColor: '#10B981' }} />
                 <span style={{ fontSize: '13px', fontWeight: 600, color: '#E2E8F0', marginLeft: '12px' }}>
-                  atithi jaiman's Zoom Meeting (HD WebRTC)
+                  Atithi&apos;s Zoom Meeting (HD WebRTC)
                 </span>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: '#10B981' }}>
@@ -402,7 +402,7 @@ export default function LandingPage() {
                   }}
                 >
                   <Mic size={12} color="#10B981" />
-                  <span>atithi jaiman (Host)</span>
+                  <span>Atithi (Host)</span>
                 </div>
               </div>
 

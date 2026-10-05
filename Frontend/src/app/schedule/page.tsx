@@ -23,7 +23,7 @@ import ZoomFooter from '@/components/common/ZoomFooter';
 export default function SchedulePage() {
   const router = useRouter();
   const currentUser = auth.getCurrentUser();
-  const defaultHostName = currentUser?.full_name || 'atithi jaiman';
+  const defaultHostName = currentUser?.full_name || 'Atithi';
 
   // Tomorrow as default date
   const tomorrow = new Date();
