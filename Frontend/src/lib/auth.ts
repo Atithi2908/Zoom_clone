@@ -9,10 +9,17 @@ export interface UserProfile {
 
 const AUTH_STORAGE_KEY = 'zoom_clone_user';
 const TOKEN_STORAGE_KEY = 'zoom_clone_token';
+const SIGNED_OUT_STORAGE_KEY = 'zoom_clone_signed_out';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 export const auth = {
+  // Check if user has explicitly signed out
+  isSignedOut(): boolean {
+    if (typeof window === 'undefined') return false;
+    return localStorage.getItem(SIGNED_OUT_STORAGE_KEY) === 'true';
+  },
+
   // Retrieve currently logged-in user from localStorage
   getCurrentUser(): UserProfile | null {
     if (typeof window === 'undefined') return null;
@@ -47,6 +54,7 @@ export const auth = {
   // Save user profile & token
   setSession(user: UserProfile, token: string) {
     if (typeof window === 'undefined') return;
+    localStorage.removeItem(SIGNED_OUT_STORAGE_KEY);
     localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(user));
     localStorage.setItem(TOKEN_STORAGE_KEY, token);
     window.dispatchEvent(new Event('auth-change'));
@@ -60,10 +68,23 @@ export const auth = {
     window.dispatchEvent(new Event('auth-change'));
   },
 
+  // Sign Out
+  signOut() {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(SIGNED_OUT_STORAGE_KEY, 'true');
+    }
+    this.clearSession();
+  },
+
   // Ensure default user session is initialized and valid
-  async ensureDefaultUser(): Promise<UserProfile> {
+  async ensureDefaultUser(force = false): Promise<UserProfile | null> {
     if (typeof window === 'undefined') {
-      throw new Error('Window is undefined');
+      return null;
+    }
+
+    // If user explicitly signed out and not forcing, respect the signed-out state
+    if (!force && this.isSignedOut()) {
+      return null;
     }
 
     const token = this.getToken();
@@ -148,10 +169,5 @@ export const auth = {
     const data = await res.json();
     this.setSession(data.user, data.token);
     return data.user;
-  },
-
-  // Sign Out
-  signOut() {
-    this.clearSession();
   },
 };

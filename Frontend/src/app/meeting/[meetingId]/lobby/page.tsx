@@ -25,22 +25,21 @@ function LobbyContent() {
   const meetingId = params.meetingId as string;
   const isHostParam = searchParams.get('host') === 'true';
   const nameParam = searchParams.get('name');
-  const [loggedInUser, setLoggedInUser] = useState<UserProfile | null>(auth.getCurrentUser());
+  const [loggedInUser, setLoggedInUser] = useState<UserProfile | null>(() => {
+    return typeof window !== 'undefined' ? auth.getCurrentUser() : null;
+  });
 
   useEffect(() => {
-    let isMounted = true;
-    if (!loggedInUser) {
-      auth.ensureDefaultUser().then((u) => {
-        if (isMounted) {
-          setLoggedInUser(u);
-          if (!nameParam) {
-            setDisplayName(u.full_name);
-          }
-        }
-      }).catch(() => {});
+    const u = auth.getCurrentUser();
+    setLoggedInUser(u);
+    if (!nameParam) {
+      if (u?.full_name) {
+        setDisplayName(u.full_name);
+      } else {
+        setDisplayName('');
+      }
     }
-    return () => { isMounted = false; };
-  }, [loggedInUser, nameParam]);
+  }, [nameParam]);
 
   // Meeting verification state
   const [isValidating, setIsValidating] = useState(true);

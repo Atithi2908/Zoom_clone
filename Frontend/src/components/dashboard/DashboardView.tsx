@@ -99,6 +99,17 @@ export default function DashboardView() {
       setLoading(true);
       setAuthError(null);
       try {
+        // If user explicitly signed out, do not auto-login
+        if (auth.isSignedOut()) {
+          if (isMounted) {
+            setUser(null);
+            setUpcomingMeetings([]);
+            setRecentMeetings([]);
+            setLoading(false);
+          }
+          return;
+        }
+
         // Fast path: if user already in localStorage, use immediately for instant paint
         const cached = auth.getCurrentUser();
         if (cached && isMounted) {
@@ -110,27 +121,31 @@ export default function DashboardView() {
         if (!isMounted) return;
         setUser(currentUser);
 
-        // Fetch upcoming and recent meetings for this default/selected user
-        const [upcoming, recent] = await Promise.all([
-          api.getUpcomingMeetings(currentUser.email).catch((err) => {
-            console.error('Error fetching upcoming meetings:', err);
-            return [];
-          }),
-          api.getRecentMeetings(currentUser.email).catch((err) => {
-            console.error('Error fetching recent meetings:', err);
-            return [];
-          }),
-        ]);
+        if (currentUser) {
+          // Fetch upcoming and recent meetings for this default/selected user
+          const [upcoming, recent] = await Promise.all([
+            api.getUpcomingMeetings(currentUser.email).catch((err) => {
+              console.error('Error fetching upcoming meetings:', err);
+              return [];
+            }),
+            api.getRecentMeetings(currentUser.email).catch((err) => {
+              console.error('Error fetching recent meetings:', err);
+              return [];
+            }),
+          ]);
 
-        if (isMounted) {
-          setUpcomingMeetings(upcoming);
-          setRecentMeetings(recent);
+          if (isMounted) {
+            setUpcomingMeetings(upcoming);
+            setRecentMeetings(recent);
+          }
         }
       } catch (err: any) {
         console.warn('Notice loading default user or meetings:', err);
         if (isMounted) {
-          const fallback = auth.getCurrentUser() || { id: 1, email: 'atithi@zoom.clone', full_name: 'Atithi' };
-          setUser(fallback);
+          if (!auth.isSignedOut()) {
+            const fallback = auth.getCurrentUser() || { id: 1, email: 'atithi@zoom.clone', full_name: 'Atithi' };
+            setUser(fallback);
+          }
           setAuthError(null);
         }
       } finally {
@@ -143,6 +158,12 @@ export default function DashboardView() {
     initializeDashboard();
 
     const handleAuthChange = () => {
+      if (auth.isSignedOut()) {
+        setUser(null);
+        setUpcomingMeetings([]);
+        setRecentMeetings([]);
+        return;
+      }
       const u = auth.getCurrentUser();
       setUser(u);
       if (u?.email) {
@@ -155,6 +176,9 @@ export default function DashboardView() {
             setRecentMeetings(recent);
           }
         });
+      } else {
+        setUpcomingMeetings([]);
+        setRecentMeetings([]);
       }
     };
     window.addEventListener('auth-change', handleAuthChange);
@@ -230,17 +254,17 @@ export default function DashboardView() {
     }
   };
 
-  const handleSignOut = async () => {
+  const handleSignOut = () => {
     auth.signOut();
-    try {
-      await auth.ensureDefaultUser();
-    } catch {}
-    window.location.reload();
+    setUser(null);
+    setShowProfileMenu(false);
+    setUpcomingMeetings([]);
+    setRecentMeetings([]);
   };
 
-  const curUser = user || (typeof window !== 'undefined' ? auth.getCurrentUser() : null);
-  const displayName = curUser?.full_name || 'Atithi';
-  const displayEmail = curUser?.email || 'atithi@zoom.clone';
+  const curUser = user || (typeof window !== 'undefined' && !auth.isSignedOut() ? auth.getCurrentUser() : null);
+  const displayName = curUser?.full_name || 'Guest User';
+  const displayEmail = curUser?.email || '';
 
   const meetingsToShow = [...upcomingMeetings];
 
@@ -332,107 +356,160 @@ export default function DashboardView() {
             <ChevronDown size={14} color="#64748B" />
           </div>
 
-          {/* Profile Avatar Square */}
-          <div style={{ position: 'relative' }}>
-            <div
-              onClick={() => setShowProfileMenu(!showProfileMenu)}
-              style={{
-                width: '32px',
-                height: '32px',
-                backgroundColor: '#18181B',
-                borderRadius: '8px',
-                color: '#FFFFFF',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontWeight: 700,
-                fontSize: '13px',
-                cursor: 'pointer',
-              }}
-              title={displayName}
-            >
-              {displayName.charAt(0).toUpperCase()}
-            </div>
-
-            {showProfileMenu && (
-              <div
+          {/* Profile Area: Sign In / Sign Up when signed out, Avatar menu when logged in */}
+          {!curUser ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <button
+                onClick={() => router.push('/signin')}
                 style={{
-                  position: 'absolute',
-                  right: 0,
-                  top: '42px',
-                  backgroundColor: '#FFFFFF',
-                  borderRadius: '12px',
-                  border: '1px solid #E2E8F0',
-                  boxShadow: '0 12px 32px rgba(0,0,0,0.12)',
-                  width: '260px',
-                  padding: '12px',
-                  zIndex: 100,
+                  backgroundColor: 'transparent',
+                  color: '#0E71EB',
+                  border: '1px solid #BFDBFE',
+                  padding: '6px 14px',
+                  borderRadius: '6px',
+                  fontSize: '13px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
                 }}
               >
-                <div style={{ padding: '8px 12px', borderBottom: '1px solid #F1F5F9' }}>
-                  <div style={{ fontWeight: 700, fontSize: '14px', color: '#0F172A' }}>{displayName}</div>
-                  <div style={{ fontSize: '12px', color: '#64748B', marginTop: '2px' }}>{displayEmail}</div>
-                  <div style={{ fontSize: '11px', color: '#0E71EB', fontWeight: 600, marginTop: '4px' }}>Plan: Workplace Basic</div>
-                </div>
-
-                <div style={{ padding: '6px 0' }}>
-                  <Link
-                    href="/schedule"
-                    onClick={() => setShowProfileMenu(false)}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px',
-                      padding: '8px 12px',
-                      fontSize: '13px',
-                      color: '#334155',
-                      textDecoration: 'none',
-                      borderRadius: '6px',
-                    }}
-                  >
-                    <Calendar size={15} color="#0E71EB" />
-                    <span>Schedule Meeting</span>
-                  </Link>
-
-                  <div
-                    onClick={() => { setShowProfileMenu(false); setShowJoinModal(true); }}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px',
-                      padding: '8px 12px',
-                      fontSize: '13px',
-                      color: '#334155',
-                      cursor: 'pointer',
-                      borderRadius: '6px',
-                    }}
-                  >
-                    <Plus size={15} color="#0E71EB" />
-                    <span>Join Meeting</span>
-                  </div>
-
-                  <div
-                    onClick={handleSignOut}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px',
-                      padding: '8px 12px',
-                      fontSize: '13px',
-                      color: '#EF4444',
-                      cursor: 'pointer',
-                      borderRadius: '6px',
-                      borderTop: '1px solid #F1F5F9',
-                      marginTop: '6px',
-                    }}
-                  >
-                    <LogOut size={15} />
-                    <span>Sign Out</span>
-                  </div>
-                </div>
+                Sign In
+              </button>
+              <button
+                onClick={() => router.push('/signup')}
+                style={{
+                  backgroundColor: '#0E71EB',
+                  color: '#FFFFFF',
+                  border: 'none',
+                  padding: '6px 14px',
+                  borderRadius: '6px',
+                  fontSize: '13px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  boxShadow: '0 2px 4px rgba(14,113,235,0.2)',
+                }}
+              >
+                Sign Up Free
+              </button>
+            </div>
+          ) : (
+            <div style={{ position: 'relative' }}>
+              <div
+                onClick={() => setShowProfileMenu(!showProfileMenu)}
+                style={{
+                  width: '32px',
+                  height: '32px',
+                  backgroundColor: '#18181B',
+                  borderRadius: '8px',
+                  color: '#FFFFFF',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontWeight: 700,
+                  fontSize: '13px',
+                  cursor: 'pointer',
+                }}
+                title={displayName}
+              >
+                {displayName.charAt(0).toUpperCase()}
               </div>
-            )}
-          </div>
+
+              {showProfileMenu && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    right: 0,
+                    top: '42px',
+                    backgroundColor: '#FFFFFF',
+                    borderRadius: '12px',
+                    border: '1px solid #E2E8F0',
+                    boxShadow: '0 12px 32px rgba(0,0,0,0.12)',
+                    width: '260px',
+                    padding: '12px',
+                    zIndex: 100,
+                  }}
+                >
+                  <div style={{ padding: '8px 12px', borderBottom: '1px solid #F1F5F9' }}>
+                    <div style={{ fontWeight: 700, fontSize: '14px', color: '#0F172A' }}>{displayName}</div>
+                    <div style={{ fontSize: '12px', color: '#64748B', marginTop: '2px' }}>{displayEmail}</div>
+                    <div style={{ fontSize: '11px', color: '#0E71EB', fontWeight: 600, marginTop: '4px' }}>Plan: Workplace Basic</div>
+                  </div>
+
+                  <div style={{ padding: '6px 0' }}>
+                    <Link
+                      href="/schedule"
+                      onClick={() => setShowProfileMenu(false)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        padding: '8px 12px',
+                        fontSize: '13px',
+                        color: '#334155',
+                        textDecoration: 'none',
+                        borderRadius: '6px',
+                      }}
+                    >
+                      <Calendar size={15} color="#0E71EB" />
+                      <span>Schedule Meeting</span>
+                    </Link>
+
+                    <div
+                      onClick={() => { setShowProfileMenu(false); setShowJoinModal(true); }}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        padding: '8px 12px',
+                        fontSize: '13px',
+                        color: '#334155',
+                        cursor: 'pointer',
+                        borderRadius: '6px',
+                      }}
+                    >
+                      <Plus size={15} color="#0E71EB" />
+                      <span>Join Meeting</span>
+                    </div>
+
+                    <div
+                      onClick={() => { setShowProfileMenu(false); router.push('/signup'); }}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        padding: '8px 12px',
+                        fontSize: '13px',
+                        color: '#0E71EB',
+                        cursor: 'pointer',
+                        borderRadius: '6px',
+                      }}
+                    >
+                      <Users size={15} color="#0E71EB" />
+                      <span>Sign Up New User</span>
+                    </div>
+
+                    <div
+                      onClick={handleSignOut}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        padding: '8px 12px',
+                        fontSize: '13px',
+                        color: '#EF4444',
+                        cursor: 'pointer',
+                        borderRadius: '6px',
+                        borderTop: '1px solid #F1F5F9',
+                        marginTop: '6px',
+                      }}
+                    >
+                      <LogOut size={15} />
+                      <span>Sign Out</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </header>
 
@@ -571,71 +648,132 @@ export default function DashboardView() {
         >
           {/* ── Center Column ─────────────────────────────────────────── */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            {/* Card 1: User Profile Card */}
-            <div
-              style={{
-                backgroundColor: '#FFFFFF',
-                borderRadius: '12px',
-                border: '1px solid #E2E8F0',
-                padding: '24px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                boxShadow: '0 1px 3px rgba(0,0,0,0.02)',
-              }}
-              className="zoom-profile-card"
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: '18px' }}>
-                <div
-                  style={{
-                    width: '60px',
-                    height: '60px',
-                    backgroundColor: '#18181B',
-                    borderRadius: '14px',
-                    color: '#FFFFFF',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontSize: '22px',
-                    fontWeight: 700,
-                  }}
-                >
-                  {displayName.charAt(0).toUpperCase()}
-                </div>
+            {/* Card 1: User Profile Card (or Signed-Out Welcome Prompt) */}
+            {!curUser ? (
+              <div
+                style={{
+                  backgroundColor: '#FFFFFF',
+                  borderRadius: '12px',
+                  border: '1px solid #E2E8F0',
+                  padding: '24px 28px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  boxShadow: '0 1px 3px rgba(0,0,0,0.02)',
+                  flexWrap: 'wrap',
+                  gap: '16px',
+                }}
+                className="zoom-profile-card"
+              >
                 <div>
                   <h2 style={{ fontSize: '20px', fontWeight: 700, color: '#0F172A', margin: 0 }}>
-                    {displayName}
+                    Welcome to Zoom Workplace
                   </h2>
-                  <div style={{ fontSize: '13px', color: '#64748B', marginTop: '4px' }}>
-                    Plan: <span style={{ color: '#0F172A', fontWeight: 600 }}>Workplace Basic</span>
+                  <div style={{ fontSize: '13px', color: '#64748B', marginTop: '6px' }}>
+                    You are currently signed out. Sign up free to host meetings and create your personal room.
                   </div>
                 </div>
-              </div>
 
-              <div style={{ textAlign: 'right', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '6px' }} className="zoom-profile-card-actions">
-                <button
-                  onClick={() => setShowUpgradeModal(true)}
-                  style={{
-                    backgroundColor: '#FFFFFF',
-                    color: '#0E71EB',
-                    border: '1px solid #BFDBFE',
-                    borderRadius: '6px',
-                    padding: '7px 16px',
-                    fontSize: '13px',
-                    fontWeight: 600,
-                    cursor: 'pointer',
-                  }}
-                >
-                  Manage Plan
-                </button>
-                <span
-                  onClick={() => setShowUpgradeModal(true)}
-                  style={{ fontSize: '12px', color: '#0E71EB', cursor: 'pointer', fontWeight: 500 }}
-                >
-                  View Plan Details
-                </span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <button
+                    onClick={() => router.push('/signin')}
+                    style={{
+                      backgroundColor: '#FFFFFF',
+                      color: '#0E71EB',
+                      border: '1px solid #BFDBFE',
+                      borderRadius: '6px',
+                      padding: '8px 18px',
+                      fontSize: '13px',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Sign In
+                  </button>
+                  <button
+                    onClick={() => router.push('/signup')}
+                    style={{
+                      backgroundColor: '#0E71EB',
+                      color: '#FFFFFF',
+                      border: 'none',
+                      borderRadius: '6px',
+                      padding: '8px 20px',
+                      fontSize: '13px',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      boxShadow: '0 2px 4px rgba(14,113,235,0.2)',
+                    }}
+                  >
+                    Sign Up as New User
+                  </button>
+                </div>
               </div>
-            </div>
+            ) : (
+              <div
+                style={{
+                  backgroundColor: '#FFFFFF',
+                  borderRadius: '12px',
+                  border: '1px solid #E2E8F0',
+                  padding: '24px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  boxShadow: '0 1px 3px rgba(0,0,0,0.02)',
+                }}
+                className="zoom-profile-card"
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '18px' }}>
+                  <div
+                    style={{
+                      width: '60px',
+                      height: '60px',
+                      backgroundColor: '#18181B',
+                      borderRadius: '14px',
+                      color: '#FFFFFF',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontSize: '22px',
+                      fontWeight: 700,
+                    }}
+                  >
+                    {displayName.charAt(0).toUpperCase()}
+                  </div>
+                  <div>
+                    <h2 style={{ fontSize: '20px', fontWeight: 700, color: '#0F172A', margin: 0 }}>
+                      {displayName}
+                    </h2>
+                    <div style={{ fontSize: '13px', color: '#64748B', marginTop: '4px' }}>
+                      Plan: <span style={{ color: '#0F172A', fontWeight: 600 }}>Workplace Basic</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ textAlign: 'right', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '6px' }} className="zoom-profile-card-actions">
+                  <button
+                    onClick={() => setShowUpgradeModal(true)}
+                    style={{
+                      backgroundColor: '#FFFFFF',
+                      color: '#0E71EB',
+                      border: '1px solid #BFDBFE',
+                      borderRadius: '6px',
+                      padding: '7px 16px',
+                      fontSize: '13px',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Manage Plan
+                  </button>
+                  <span
+                    onClick={() => setShowUpgradeModal(true)}
+                    style={{ fontSize: '12px', color: '#0E71EB', cursor: 'pointer', fontWeight: 500 }}
+                  >
+                    View Plan Details
+                  </span>
+                </div>
+              </div>
+            )}
 
             {/* Card 2: Workplace Pro Promo Banner */}
             <div
