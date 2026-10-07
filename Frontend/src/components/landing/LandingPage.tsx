@@ -27,9 +27,11 @@ export default function LandingPage() {
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
 
   useEffect(() => {
-    setCurrentUser(auth.getCurrentUser());
+    const u = !auth.isSignedOut() ? auth.getCurrentUser() : null;
+    setCurrentUser(u);
     const handleAuthChange = () => {
-      setCurrentUser(auth.getCurrentUser());
+      const updated = !auth.isSignedOut() ? auth.getCurrentUser() : null;
+      setCurrentUser(updated);
     };
     window.addEventListener('auth-change', handleAuthChange);
     return () => window.removeEventListener('auth-change', handleAuthChange);

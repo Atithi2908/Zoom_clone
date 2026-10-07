@@ -260,6 +260,7 @@ export default function DashboardView() {
     setShowProfileMenu(false);
     setUpcomingMeetings([]);
     setRecentMeetings([]);
+    router.push('/landing');
   };
 
   const curUser = user || (typeof window !== 'undefined' && !auth.isSignedOut() ? auth.getCurrentUser() : null);
