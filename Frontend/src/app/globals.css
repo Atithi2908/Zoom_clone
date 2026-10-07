@@ -839,6 +839,7 @@ button {
 .participants-list {
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 12px;
   display: flex;
   flex-direction: column;
@@ -889,6 +890,7 @@ button {
 .participant-item-actions {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
   margin-top: 8px;
   padding-top: 8px;
@@ -896,8 +898,10 @@ button {
 }
 
 .host-action-btn {
-  font-size: 11px;
-  padding: 4px 8px;
+  font-size: 12px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
   background-color: #2D2D40;
   color: #E2E8F0;
   border: 1px solid #3F3F56;
@@ -906,8 +910,9 @@ button {
   font-weight: 500;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  justify-content: center;
   transition: all 0.15s;
+  flex-shrink: 0;
 }
 
 .host-action-btn:hover {
@@ -1249,14 +1254,16 @@ button {
 .workplace-search {
   display: flex;
   align-items: center;
-  gap: 8px;
+  justify-content: center;
   background-color: #1C1C28;
   border: 1px solid #2D2D40;
   border-radius: 8px;
   padding: 5px 14px;
-  width: 320px;
-  color: #94A3B8;
+  width: 280px;
+  color: #CBD5E1;
   font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.2px;
 }
 
 .workplace-main {
@@ -1714,4 +1721,47 @@ button {
     gap: 28px !important;
   }
 }
+
+/* ── Universal Responsive Polish (Phone & Laptop scaling) ─────────────────── */
+@media (max-width: 768px) {
+  .navbar {
+    padding: 0 16px !important;
+    height: 56px !important;
+  }
+  .nav-search-pill {
+    display: none !important;
+  }
+  .nav-links {
+    gap: 16px !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .navbar {
+    padding: 0 12px !important;
+  }
+  .nav-brand span {
+    font-size: 20px !important;
+  }
+  .nav-links {
+    gap: 10px !important;
+    font-size: 13px !important;
+  }
+  .join-card {
+    padding: 24px 16px !important;
+    margin: 16px auto !important;
+  }
+  .modal-content {
+    width: 95% !important;
+    padding: 20px 14px !important;
+  }
+  .preview-box {
+    aspect-ratio: 4 / 3 !important;
+  }
+  .lobby-card {
+    margin: 12px 8px !important;
+    padding: 20px 12px !important;
+  }
+}
+
 

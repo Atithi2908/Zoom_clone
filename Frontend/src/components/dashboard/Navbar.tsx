@@ -42,6 +42,7 @@ export default function Navbar() {
 
       <div className="nav-profile">
         <div
+          className="nav-search-pill"
           style={{
             display: 'flex',
             alignItems: 'center',

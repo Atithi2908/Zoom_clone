@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Lock, Mail, Eye, EyeOff, Loader2, AlertCircle, ArrowLeft } from 'lucide-react';
@@ -8,12 +8,54 @@ import { auth } from '@/lib/auth';
 
 export default function SignInPage() {
   const router = useRouter();
+  const [isCheckingAuth, setIsCheckingAuth] = useState(true);
   const [email, setEmail] = useState('atithi@zoom.clone');
   const [password, setPassword] = useState('password123');
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function checkAuth() {
+      const token = auth.getToken();
+      const user = auth.getCurrentUser();
+
+      if (!token || !user) {
+        if (isMounted) setIsCheckingAuth(false);
+        return;
+      }
+
+      // If token and user exist in storage, verify token with backend
+      try {
+        const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/auth/me`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (res.ok) {
+          router.replace('/dashboard');
+          return;
+        } else if (res.status === 401 || res.status === 403) {
+          auth.clearSession();
+          if (isMounted) setIsCheckingAuth(false);
+          return;
+        }
+      } catch {
+        // If network error during validation, trust existing session and redirect
+        router.replace('/dashboard');
+        return;
+      }
+
+      if (isMounted) setIsCheckingAuth(false);
+    }
+
+    checkAuth();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [router]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -33,6 +75,30 @@ export default function SignInPage() {
       setIsLoading(false);
     }
   };
+
+  if (isCheckingAuth) {
+    return (
+      <div
+        style={{
+          minHeight: '100vh',
+          backgroundColor: '#F7F9FA',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: '16px',
+        }}
+      >
+        <div style={{ fontSize: '32px', fontWeight: 800, color: '#0E71EB', letterSpacing: '-1px' }}>
+          zoom
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#64748B', fontSize: '14px' }}>
+          <Loader2 size={18} style={{ animation: 'spin 1s linear infinite' }} />
+          <span>Loading...</span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div

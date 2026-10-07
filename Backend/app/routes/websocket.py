@@ -50,6 +50,23 @@ class SignalingManager:
         if meeting_id not in self.rooms:
             self.rooms[meeting_id] = []
 
+        # Evict any existing stale connection for the same session_id or same authenticated user
+        stale_peers = [
+            p for p in self.rooms[meeting_id]
+            if p["session_id"] == session_id or (
+                authenticated_email and p.get("authenticated_email") and
+                p.get("authenticated_email").strip().lower() == authenticated_email.strip().lower()
+            )
+        ]
+        for stale in stale_peers:
+            stale_sid = stale["session_id"]
+            print(f"[WS] Evicting stale session '{stale_sid}' for incoming peer '{session_id}' in room '{meeting_id}'", flush=True)
+            try:
+                await stale["ws"].close(code=4000, reason="Superseded by new session")
+            except Exception:
+                pass
+            await self.disconnect(meeting_id, stale_sid)
+
         peer_info = {
             "ws": websocket,
             "session_id": session_id,
@@ -102,22 +119,45 @@ class SignalingManager:
 
     async def disconnect(self, meeting_id: str, session_id: str):
         if meeting_id in self.rooms:
-            # Remove disconnected peer
-            self.rooms[meeting_id] = [p for p in self.rooms[meeting_id] if p["session_id"] != session_id]
-            print(f"[WS] Peer '{session_id}' left room '{meeting_id}'. Remaining: {len(self.rooms[meeting_id])}")
+            # Check if this peer is actually present in room (idempotency guard)
+            peer_exists = any(p["session_id"] == session_id for p in self.rooms[meeting_id])
+            if not peer_exists:
+                return
 
-            # Broadcast departure to remaining peers
-            for peer in self.rooms[meeting_id]:
+            # Remove disconnected peer immediately from active participants list
+            self.rooms[meeting_id] = [p for p in self.rooms[meeting_id] if p["session_id"] != session_id]
+            print(f"[WS] Peer '{session_id}' left room '{meeting_id}'. Remaining: {len(self.rooms[meeting_id])}", flush=True)
+
+            # Broadcast departure to remaining peers immediately (both participant-left and peer-left for full protocol compatibility)
+            for peer in list(self.rooms[meeting_id]):
                 try:
                     await peer["ws"].send_text(json.dumps({
-                        "type": "peer-left",
-                        "session_id": session_id
+                        "type": "participant-left",
+                        "session_id": session_id,
+                        "participant_id": session_id
                     }))
-                except Exception:
-                    pass
+                    await peer["ws"].send_text(json.dumps({
+                        "type": "peer-left",
+                        "session_id": session_id,
+                        "participant_id": session_id
+                    }))
+                except Exception as e:
+                    print(f"[WS] Error notifying peer {peer.get('session_id')} of departure: {e}", flush=True)
 
             if not self.rooms[meeting_id]:
                 del self.rooms[meeting_id]
+
+        # Clean up database participant record for this session
+        try:
+            with SessionLocal() as db:
+                p_rec = db.query(Participant).filter(
+                    Participant.session_id == session_id
+                ).first()
+                if p_rec:
+                    db.delete(p_rec)
+                    db.commit()
+        except Exception as e:
+            print(f"[WS] Error cleaning up participant db session {session_id}: {e}", flush=True)
 
     async def broadcast_to_room(self, meeting_id: str, sender_session_id: str, message: dict):
         """Forward payload to all OTHER peers in the room."""
@@ -398,8 +438,15 @@ async def websocket_signaling_endpoint(
 
                     # Broadcast removal to ALL remaining peers in the room immediately
                     await manager.broadcast_all(norm_id, {
+                        "type": "participant-left",
+                        "session_id": target_session_id,
+                        "participant_id": target_session_id,
+                        "reason": "removed"
+                    })
+                    await manager.broadcast_all(norm_id, {
                         "type": "peer-left",
                         "session_id": target_session_id,
+                        "participant_id": target_session_id,
                         "reason": "removed"
                     })
                     continue
@@ -477,6 +524,16 @@ async def websocket_signaling_endpoint(
                     "timestamp": datetime.now().strftime("%I:%M %p")
                 }
                 await manager.broadcast_to_room(norm_id, session_id, chat_payload)
+
+            # 4b. Explicit leave signal from participant (immediate departure with zero delay)
+            elif msg_type in ["leave", "peer-left", "participant-left", "leave_meeting"]:
+                print(f"[WS] Explicit leave received from peer '{session_id}' in room '{norm_id}'", flush=True)
+                await manager.disconnect(norm_id, session_id)
+                try:
+                    await websocket.close()
+                except Exception:
+                    pass
+                break
 
             # 5. End meeting for everyone
             # Verified server-side: authenticated sender, sender in room, sender is host

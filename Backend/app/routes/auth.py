@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import Optional, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, status, Header
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 
 from ..database import get_db
 from ..models import User
@@ -15,6 +16,7 @@ from ..schemas import UserSignUp, UserSignIn, UserResponse, AuthTokenResponse
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
+DEFAULT_USER_EMAIL = os.getenv("DEFAULT_USER_EMAIL", "atithi@zoom.clone").strip().lower()
 SALT = os.getenv("PASSWORD_SALT", "zoom_clone_secure_salt_2024")
 SECRET_KEY = os.getenv("SECRET_KEY", "zoom-clone-dev-secret-key-change-in-production")
 ACCESS_TOKEN_EXPIRE_SECONDS = 60 * 60 * 24 * 7  # 7-day token expiration
@@ -130,3 +132,23 @@ def get_me(authorization: Optional[str] = Header(None), db: Session = Depends(ge
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
     return user
+
+@router.get("/default-user", response_model=AuthTokenResponse)
+def get_default_user(db: Session = Depends(get_db)):
+    """
+    Retrieve the configured default user with a signed JWT access token.
+    Enables automatic default-user authentication on first visit without manual login.
+    """
+    user = db.query(User).filter(func.lower(User.email) == DEFAULT_USER_EMAIL).first()
+    if not user:
+        # Fallback to first existing user
+        user = db.query(User).order_by(User.id.asc()).first()
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Default user not found. Database has not been seeded. Please run seed.py."
+        )
+
+    token = create_access_token(user_id=user.id, email=user.email)
+    return AuthTokenResponse(token=token, user=UserResponse.model_validate(user))

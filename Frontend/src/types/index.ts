@@ -64,6 +64,9 @@ export type SignalMessageType =
   | 'answer'
   | 'ice-candidate'
   | 'peer-left'
+  | 'participant-left'
+  | 'leave'
+  | 'leave_meeting'
   | 'toggle-audio'
   | 'toggle-video'
   | 'participant-state'
@@ -82,6 +85,7 @@ export interface SignalMessage {
   sender_session_id?: string;
   sender_name?: string;
   session_id?: string;
+  participant_id?: string;
   display_name?: string;
   role?: 'host' | 'participant';
   sdp?: RTCSessionDescriptionInit;

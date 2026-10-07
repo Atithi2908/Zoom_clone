@@ -17,12 +17,12 @@ import {
   Shield,
 } from 'lucide-react';
 import { api } from '@/lib/api';
-import { auth } from '@/lib/auth';
+import { auth, UserProfile } from '@/lib/auth';
 import ZoomFooter from '@/components/common/ZoomFooter';
 
 export default function SchedulePage() {
   const router = useRouter();
-  const currentUser = auth.getCurrentUser();
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(auth.getCurrentUser());
   const defaultHostName = currentUser?.full_name || 'Atithi';
 
   // Tomorrow as default date
@@ -32,6 +32,16 @@ export default function SchedulePage() {
 
   // Form State
   const [topic, setTopic] = useState(`${defaultHostName}'s Zoom Meeting`);
+
+  React.useEffect(() => {
+    let isMounted = true;
+    auth.ensureDefaultUser().then((u) => {
+      if (isMounted) {
+        setCurrentUser(u);
+      }
+    }).catch(() => {});
+    return () => { isMounted = false; };
+  }, []);
   const [showDescription, setShowDescription] = useState(false);
   const [description, setDescription] = useState('');
   const [date, setDate] = useState(defaultDateStr);
@@ -55,10 +65,69 @@ export default function SchedulePage() {
   const [successMeeting, setSuccessMeeting] = useState<any | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  const checkIsFuture = (dStr: string, hStr: string, mStr: string, pStr: 'AM' | 'PM') => {
+    if (!dStr) return false;
+    let h = parseInt(hStr, 10);
+    if (pStr === 'PM' && h < 12) h += 12;
+    if (pStr === 'AM' && h === 12) h = 0;
+    const parts = dStr.split('-').map(Number);
+    if (parts.length !== 3 || parts.some(isNaN)) return false;
+    const [year, month, day] = parts;
+    const selected = new Date(year, month - 1, day, h, parseInt(mStr, 10) || 0, 0);
+    return !isNaN(selected.getTime()) && selected.getTime() > Date.now();
+  };
+
+  const handleDateChange = (newDate: string) => {
+    setDate(newDate);
+    if (errorMessage === 'Meeting date and time must be in the future.') {
+      if (checkIsFuture(newDate, timeHour, timeMinute, timePeriod)) {
+        setErrorMessage(null);
+      }
+    }
+  };
+
+  const handleHourChange = (newHour: string) => {
+    setTimeHour(newHour);
+    if (errorMessage === 'Meeting date and time must be in the future.') {
+      if (checkIsFuture(date, newHour, timeMinute, timePeriod)) {
+        setErrorMessage(null);
+      }
+    }
+  };
+
+  const handleMinuteChange = (newMinute: string) => {
+    setTimeMinute(newMinute);
+    if (errorMessage === 'Meeting date and time must be in the future.') {
+      if (checkIsFuture(date, timeHour, newMinute, timePeriod)) {
+        setErrorMessage(null);
+      }
+    }
+  };
+
+  const handlePeriodChange = (newPeriod: 'AM' | 'PM') => {
+    setTimePeriod(newPeriod);
+    if (errorMessage === 'Meeting date and time must be in the future.') {
+      if (checkIsFuture(date, timeHour, timeMinute, newPeriod)) {
+        setErrorMessage(null);
+      }
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!topic.trim()) {
       setErrorMessage('Please provide a meeting topic.');
+      return;
+    }
+
+    if (!date) {
+      setErrorMessage('Please select a meeting date.');
+      return;
+    }
+
+    // Frontend validation: Ensure scheduled datetime is strictly in the future
+    if (!checkIsFuture(date, timeHour, timeMinute, timePeriod)) {
+      setErrorMessage('Meeting date and time must be in the future.');
       return;
     }
 
@@ -409,11 +478,11 @@ export default function SchedulePage() {
                     type="date"
                     required
                     value={date}
-                    onChange={(e) => setDate(e.target.value)}
+                    onChange={(e) => handleDateChange(e.target.value)}
                     style={{
                       padding: '10px 14px',
                       borderRadius: '8px',
-                      border: '1px solid #CBD5E1',
+                      border: errorMessage === 'Meeting date and time must be in the future.' ? '1px solid #EF4444' : '1px solid #CBD5E1',
                       fontSize: '14px',
                       outline: 'none',
                     }}
@@ -422,11 +491,11 @@ export default function SchedulePage() {
                   {/* Hour */}
                   <select
                     value={timeHour}
-                    onChange={(e) => setTimeHour(e.target.value)}
+                    onChange={(e) => handleHourChange(e.target.value)}
                     style={{
                       padding: '10px 12px',
                       borderRadius: '8px',
-                      border: '1px solid #CBD5E1',
+                      border: errorMessage === 'Meeting date and time must be in the future.' ? '1px solid #EF4444' : '1px solid #CBD5E1',
                       fontSize: '14px',
                       outline: 'none',
                       backgroundColor: 'white',
@@ -440,11 +509,11 @@ export default function SchedulePage() {
                   {/* Minute */}
                   <select
                     value={timeMinute}
-                    onChange={(e) => setTimeMinute(e.target.value)}
+                    onChange={(e) => handleMinuteChange(e.target.value)}
                     style={{
                       padding: '10px 12px',
                       borderRadius: '8px',
-                      border: '1px solid #CBD5E1',
+                      border: errorMessage === 'Meeting date and time must be in the future.' ? '1px solid #EF4444' : '1px solid #CBD5E1',
                       fontSize: '14px',
                       outline: 'none',
                       backgroundColor: 'white',
@@ -458,11 +527,11 @@ export default function SchedulePage() {
                   {/* AM/PM */}
                   <select
                     value={timePeriod}
-                    onChange={(e) => setTimePeriod(e.target.value as any)}
+                    onChange={(e) => handlePeriodChange(e.target.value as any)}
                     style={{
                       padding: '10px 12px',
                       borderRadius: '8px',
-                      border: '1px solid #CBD5E1',
+                      border: errorMessage === 'Meeting date and time must be in the future.' ? '1px solid #EF4444' : '1px solid #CBD5E1',
                       fontSize: '14px',
                       outline: 'none',
                       backgroundColor: 'white',
@@ -472,6 +541,23 @@ export default function SchedulePage() {
                     <option value="PM">PM</option>
                   </select>
                 </div>
+
+                {errorMessage === 'Meeting date and time must be in the future.' && (
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      color: '#DC2626',
+                      fontSize: '12px',
+                      fontWeight: 500,
+                      marginTop: '8px',
+                    }}
+                  >
+                    <AlertTriangle size={14} />
+                    <span>Meeting date and time must be in the future.</span>
+                  </div>
+                )}
               </div>
 
               {/* Duration */}

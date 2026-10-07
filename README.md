@@ -110,20 +110,25 @@ The database is built on SQLite using SQLAlchemy ORM with a clean 1-to-N relatio
 - Python 3.10+
 - Node.js 18+ and npm
 
-### 1. Backend Setup (FastAPI)
+### 1. Database Initialization & Backend Setup (FastAPI)
 ```bash
+# Initialize SQLite database and seed default user + 6 meetings:
+python seed.py
+
+# Or from the Backend directory:
 cd Backend
-
-# Install dependencies
 pip install -r requirements.txt
-
-# Seed sample data into SQLite
 python seed.py
 
 # Start the server (runs on http://localhost:8000)
 python run.py
 ```
-> The database file `zoom_clone.db` is automatically created and seeded on startup.
+> Running `python seed.py` creates SQLite tables and populates:
+> - **1 Default User**: Atithi (`atithi@zoom.clone`).
+> - **3 Upcoming Meetings**: Future scheduled meetings owned by the default user (`host_id`).
+> - **3 Recent Meetings**: Completed meetings owned and attended by the default user (`role='host'`).
+> - Seeding is idempotent and safe to run multiple times without creating duplicates.
+> 
 > API Documentation is available at `http://localhost:8000/docs`.
 
 ### 2. Frontend Setup (Next.js)
@@ -139,18 +144,24 @@ npm run dev
 
 Visit **`http://localhost:3000`** in your browser.
 
+> **Automatic Default User Flow**: On first visit (fresh browser / no localStorage), the application automatically authenticates as the default user and takes you directly to the dashboard with the seeded upcoming and recent meetings displayed. No login or sign-up is required.
+
 ---
 
 ## 📡 API Reference
 
 | Method | Endpoint | Description |
 |---|---|---|
+| `GET`  | `/auth/default-user` | Retrieves default user & signed JWT for automatic authentication |
+| `GET`  | `/auth/me` | Validates signed JWT session and returns current user profile |
+| `POST` | `/auth/signin` | Sign in with email and password |
+| `POST` | `/auth/signup` | Register a new account |
 | `POST` | `/meetings` | Creates an instant meeting (returns unique ID & link) |
 | `POST` | `/meetings/schedule` | Schedules a future meeting (Title, Date, Time, Duration) |
-| `GET` | `/meetings/upcoming` | Retrieves all upcoming scheduled meetings |
-| `GET` | `/meetings/recent` | Retrieves recent meeting history |
-| `GET` | `/meetings/{meeting_id}` | Retrieves meeting details |
-| `GET` | `/meetings/{meeting_id}/validate` | Validates meeting existence (returns 404 if invalid) |
+| `GET`  | `/meetings/upcoming` | Retrieves all upcoming scheduled meetings (filter by `host_email`) |
+| `GET`  | `/meetings/recent` | Retrieves recent meeting history (filter by `user_email`) |
+| `GET`  | `/meetings/{meeting_id}` | Retrieves meeting details |
+| `GET`  | `/meetings/{meeting_id}/validate` | Validates meeting existence (returns 404 if invalid) |
 | `POST` | `/meetings/{meeting_id}/participants` | Registers participant display name & session ID |
 | `PATCH`| `/meetings/{meeting_id}/status` | Updates meeting status (`active`, `completed`) |
 | `WS`   | `/ws/meeting/{meeting_id}` | WebRTC signaling channel |
@@ -174,6 +185,6 @@ To keep the implementation simple, reliable, and interview-ready:
 
 ## 💡 Key Assumptions
 
-1. **Authentication**: Per assignment instructions ("Assume a default user is logged in"), no login/signup or passwords are required. The dashboard user acts as the host ("Atithi (Host)"), while attendees joining via ID or link provide their display name in the pre-meeting lobby.
-2. **Multi-Participant Identity**: Identity is decoupled between the default dashboard host and room participants via unique client session IDs (`sess_...`), allowing two browser windows to test meetings seamlessly.
-3. **Database**: SQLite is used for persistent local storage without requiring external database services.
+1. **Default User Experience**: Per assignment requirements ("Assume a default user is logged in"), no login/signup or password entry is required. Opening the application automatically authenticates the user as the default user ("Atithi") and loads their dashboard.
+2. **Multi-Participant Identity**: Identity is decoupled between the default dashboard host and room participants via unique client session IDs (`sess_...`), allowing multiple browser windows to test meetings seamlessly.
+3. **Database**: SQLite is used with foreign keys enabled (`PRAGMA foreign_keys=ON`) for persistent relational storage without external dependencies.

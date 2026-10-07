@@ -27,6 +27,16 @@ export const auth = {
     return null;
   },
 
+  // Retrieve current auth token from localStorage
+  getToken(): string | null {
+    if (typeof window === 'undefined') return null;
+    try {
+      return localStorage.getItem(TOKEN_STORAGE_KEY);
+    } catch {
+      return null;
+    }
+  },
+
   // Check if user is logged in
   isAuthenticated(): boolean {
     if (typeof window === 'undefined') return false;
@@ -42,8 +52,58 @@ export const auth = {
     window.dispatchEvent(new Event('auth-change'));
   },
 
+  // Clear session from localStorage
+  clearSession() {
+    if (typeof window === 'undefined') return;
+    localStorage.removeItem(AUTH_STORAGE_KEY);
+    localStorage.removeItem(TOKEN_STORAGE_KEY);
+    window.dispatchEvent(new Event('auth-change'));
+  },
+
+  // Ensure default user session is initialized and valid
+  async ensureDefaultUser(): Promise<UserProfile> {
+    if (typeof window === 'undefined') {
+      throw new Error('Window is undefined');
+    }
+
+    const token = this.getToken();
+    if (token) {
+      try {
+        const res = await fetch(`${API_BASE_URL}/auth/me`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (res.ok) {
+          const validUser: UserProfile = await res.json();
+          localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(validUser));
+          return validUser;
+        }
+        // If token is invalid or expired, clear session and re-fetch default user
+        this.clearSession();
+      } catch (e) {
+        // Network error during validation - if cached user exists, return it
+        const cached = this.getCurrentUser();
+        if (cached) return cached;
+      }
+    }
+
+    // No valid session, or token was invalid/expired: fetch default user from backend
+    const res = await fetch(`${API_BASE_URL}/auth/default-user`);
+    if (!res.ok) {
+      let errorDetail = 'Failed to load default user. Please ensure the database is seeded.';
+      try {
+        const err = await res.json();
+        if (err.detail) errorDetail = err.detail;
+      } catch {}
+      throw new Error(errorDetail);
+    }
+
+    const data = await res.json();
+    this.setSession(data.user, data.token);
+    return data.user;
+  },
+
   // Sign In with email & password
-  async signIn(email: string, password: string):Promise<UserProfile> {
+  async signIn(email: string, password: string): Promise<UserProfile> {
     const res = await fetch(`${API_BASE_URL}/auth/signin`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -80,9 +140,6 @@ export const auth = {
 
   // Sign Out
   signOut() {
-    if (typeof window === 'undefined') return;
-    localStorage.removeItem(AUTH_STORAGE_KEY);
-    localStorage.removeItem(TOKEN_STORAGE_KEY);
-    window.dispatchEvent(new Event('auth-change'));
+    this.clearSession();
   },
 };

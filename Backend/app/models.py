@@ -15,7 +15,7 @@ class Meeting(Base):
     duration_minutes = Column(Integer, nullable=False, default=30)
     invite_link = Column(String(512), nullable=False)
     status = Column(String(32), nullable=False, default="scheduled")  # scheduled | active | completed
-    host_id = Column(Integer, nullable=True, index=True)
+    host_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     host_email = Column(String(255), nullable=True, index=True)
     created_at = Column(DateTime, nullable=False, default=datetime.now)
 

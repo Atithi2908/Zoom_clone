@@ -60,8 +60,12 @@ def create_instant_meeting(payload: InstantMeetingCreate, db: Session = Depends(
 
     host_id = payload.host_id
     host_email = payload.host_email
-    if not host_id and host_email:
-        u = db.query(User).filter(User.email == host_email.strip().lower()).first()
+    if host_id and not host_email:
+        u = db.query(User).filter(User.id == host_id).first()
+        if u:
+            host_email = u.email
+    elif not host_id and host_email:
+        u = db.query(User).filter(func.lower(User.email) == host_email.strip().lower()).first()
         if u:
             host_id = u.id
 
@@ -89,21 +93,40 @@ def schedule_meeting(payload: ScheduledMeetingCreate, db: Session = Depends(get_
     1. Generates unique Meeting ID and invite link.
     2. Persists naive local wall-clock datetime to SQLite with status='scheduled' and resolves host_id.
     """
+    now = datetime.now()
+    scheduled_dt = payload.scheduled_at
+
+    # Backend validation: reject any scheduled datetime that is not in the future
+    if scheduled_dt.tzinfo is not None:
+        now_utc = datetime.now(timezone.utc)
+        scheduled_utc = scheduled_dt.astimezone(timezone.utc)
+        if scheduled_utc <= now_utc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Meeting date and time must be in the future."
+            )
+        scheduled_dt = scheduled_dt.astimezone().replace(tzinfo=None)
+    else:
+        if scheduled_dt <= now:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Meeting date and time must be in the future."
+            )
+
     meeting_id = generate_meeting_id()
     while db.query(Meeting).filter(Meeting.meeting_id == meeting_id).first():
         meeting_id = generate_meeting_id()
 
     invite_link = f"{FRONTEND_URL}/meeting/{meeting_id}/lobby"
-    now = datetime.now()
-
-    scheduled_dt = payload.scheduled_at
-    if scheduled_dt.tzinfo is not None:
-        scheduled_dt = scheduled_dt.replace(tzinfo=None)
 
     host_id = payload.host_id
     host_email = payload.host_email
-    if not host_id and host_email:
-        u = db.query(User).filter(User.email == host_email.strip().lower()).first()
+    if host_id and not host_email:
+        u = db.query(User).filter(User.id == host_id).first()
+        if u:
+            host_email = u.email
+    elif not host_id and host_email:
+        u = db.query(User).filter(func.lower(User.email) == host_email.strip().lower()).first()
         if u:
             host_id = u.id
 
@@ -132,7 +155,7 @@ def get_upcoming_meetings(host_email: Optional[str] = None, db: Session = Depend
     """
     query = db.query(Meeting).filter(Meeting.status == "scheduled")
     if host_email is not None:
-        query = query.filter(Meeting.host_email == host_email)
+        query = query.filter(func.lower(Meeting.host_email) == host_email.strip().lower())
     meetings = query.order_by(asc(Meeting.scheduled_at)).all()
     return meetings
 

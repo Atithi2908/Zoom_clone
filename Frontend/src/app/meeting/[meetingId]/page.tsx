@@ -20,7 +20,6 @@ import {
   Smile,
   Monitor,
   Send,
-  Search,
   Bell,
   Settings,
   Calendar,
@@ -71,9 +70,11 @@ interface ParticipantVideoTileProps {
   stream: MediaStream | null;
   isPinned?: boolean;
   onTogglePin?: () => void;
+  onRegisterVideoRef?: (id: string, el: HTMLVideoElement | null) => void;
 }
 
 function ParticipantVideoTile({
+  participantId,
   displayName,
   role,
   isLocal,
@@ -82,23 +83,37 @@ function ParticipantVideoTile({
   stream,
   isPinned = false,
   onTogglePin,
+  onRegisterVideoRef,
 }: ParticipantVideoTileProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
   // Attach stream to <video> safely — never remount the element
   useEffect(() => {
-    if (videoRef.current && stream) {
-      if (videoRef.current.srcObject !== stream) {
-        videoRef.current.srcObject = stream;
+    if (videoRef.current) {
+      if (onRegisterVideoRef) {
+        onRegisterVideoRef(participantId, videoRef.current);
       }
-      videoRef.current.play().catch(() => {});
+      if (stream) {
+        if (videoRef.current.srcObject !== stream) {
+          videoRef.current.srcObject = stream;
+        }
+        videoRef.current.play().catch(() => {});
+      } else {
+        videoRef.current.srcObject = null;
+      }
     }
     return () => {
       if (videoRef.current) {
         videoRef.current.srcObject = null;
+        try {
+          videoRef.current.load();
+        } catch {}
+      }
+      if (onRegisterVideoRef) {
+        onRegisterVideoRef(participantId, null);
       }
     };
-  }, [stream, isVideoOn]);
+  }, [stream, isVideoOn, participantId, onRegisterVideoRef]);
 
   const avatarBg = getAvatarColor(displayName);
 
@@ -180,10 +195,31 @@ function MeetingRoomContent() {
   const searchParams = useSearchParams();
 
   const meetingId = params.meetingId as string;
-  // session_id is set in the lobby; unique per browser tab
-  const sessionId =
-    searchParams.get('session_id') || 'sess_' + Math.random().toString(36).substring(2, 9);
+  // Unique session_id per browser tab lifecycle; on browser refresh a fresh session_id is created
+  const [sessionId] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const isReload =
+        (window.performance?.getEntriesByType?.('navigation')?.[0] as any)?.type === 'reload' ||
+        (window.performance as any)?.navigation?.type === 1;
+      if (isReload) {
+        return 'sess_' + Math.random().toString(36).substring(2, 11);
+      }
+    }
+    return searchParams.get('session_id') || 'sess_' + Math.random().toString(36).substring(2, 11);
+  });
   const displayName = searchParams.get('name') || 'Participant';
+
+  // Keep URL updated so any subsequent page reload receives a new unique session ID
+  useEffect(() => {
+    if (typeof window !== 'undefined' && sessionId) {
+      const currentUrl = new URL(window.location.href);
+      if (currentUrl.searchParams.get('session_id') === sessionId) {
+        const nextId = 'sess_' + Math.random().toString(36).substring(2, 11);
+        currentUrl.searchParams.set('session_id', nextId);
+        window.history.replaceState(null, '', currentUrl.toString());
+      }
+    }
+  }, [sessionId]);
 
   // Read media preferences safely from sessionStorage with URL query fallback
   let storedAudio = true;
@@ -306,6 +342,15 @@ function MeetingRoomContent() {
   const socketRef = useRef<WebSocket | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
   const removedPeersRef = useRef<Set<string>>(new Set());
+  const videoElementsRef = useRef<Record<string, HTMLVideoElement>>({});
+
+  const registerVideoRef = useCallback((id: string, el: HTMLVideoElement | null) => {
+    if (el) {
+      videoElementsRef.current[id] = el;
+    } else {
+      delete videoElementsRef.current[id];
+    }
+  }, []);
 
   // Refs mirror state for use inside WebSocket event handlers (avoid stale closures)
   const isAudioOnRef = useRef(initialAudio);
@@ -331,6 +376,7 @@ function MeetingRoomContent() {
 
   // ── ICE queue flush for a specific peer ──────────────────────────────────
   const drainIceQueue = useCallback(async (peerId: string, pc: RTCPeerConnection) => {
+    if (!peerId || removedPeersRef.current.has(peerId)) return;
     const queue = iceQueuesRef.current[peerId];
     if (!queue || queue.length === 0) return;
     console.log(`[WebRTC] Draining ${queue.length} queued ICE candidates for ${peerId}`);
@@ -346,6 +392,71 @@ function MeetingRoomContent() {
     }
   }, []);
 
+  // ── Close & cleanup a single peer connection ─────────────────────────────
+  const cleanupPeer = useCallback((peerId: string) => {
+    if (!peerId) return;
+    console.log(`[WebRTC] Cleaning up peer: ${peerId}`);
+    removedPeersRef.current.add(peerId);
+
+    // 1. Immediately pause and clear the video element's srcObject to eliminate frozen last frame
+    const videoEl = videoElementsRef.current[peerId];
+    if (videoEl) {
+      try {
+        videoEl.pause();
+        videoEl.srcObject = null;
+        videoEl.load();
+      } catch {}
+      delete videoElementsRef.current[peerId];
+    }
+
+    // 2. Disconnect and close RTCPeerConnection, removing listeners to prevent spurious callbacks
+    if (peerConnectionsRef.current[peerId]) {
+      const pc = peerConnectionsRef.current[peerId];
+      try {
+        pc.onconnectionstatechange = null;
+        pc.oniceconnectionstatechange = null;
+        pc.onicecandidate = null;
+        pc.ontrack = null;
+        pc.getSenders().forEach((s) => {
+          try { pc.removeTrack(s); } catch {}
+        });
+        pc.getTransceivers().forEach((t) => {
+          try { t.stop(); } catch {}
+        });
+        pc.close();
+      } catch (err) {
+        console.warn(`[WebRTC] Error closing pc for ${peerId}:`, err);
+      }
+      delete peerConnectionsRef.current[peerId];
+    }
+    delete iceQueuesRef.current[peerId];
+
+    // 3. Stop remote media tracks and delete remote stream
+    if (remoteStreamsRef.current[peerId]) {
+      try {
+        remoteStreamsRef.current[peerId].getTracks().forEach((t) => {
+          try { t.stop(); } catch {}
+        });
+      } catch {}
+      delete remoteStreamsRef.current[peerId];
+    }
+
+    // 4. Update React state immediately
+    setRemoteParticipants((prev) => {
+      if (!prev[peerId]) return prev;
+      const updated = { ...prev };
+      delete updated[peerId];
+      return updated;
+    });
+    setRemoteStreams((prev) => {
+      if (!prev[peerId]) return prev;
+      const updated = { ...prev };
+      delete updated[peerId];
+      return updated;
+    });
+    setPinnedParticipantId((prev) => (prev === peerId ? null : prev));
+  }, []);
+
   // ── Create RTCPeerConnection for a specific remote peer ──────────────────
   /**
    * Each remote peer in the mesh gets ONE RTCPeerConnection.
@@ -354,7 +465,12 @@ function MeetingRoomContent() {
    * This function is idempotent: returns existing PC if already created.
    */
   const createPCFor = useCallback(
-    (peerId: string): RTCPeerConnection => {
+    (peerId: string): RTCPeerConnection | null => {
+      // Reject creation if peer is removed, self, or invalid
+      if (!peerId || peerId === sessionId || removedPeersRef.current.has(peerId)) {
+        return null;
+      }
+
       // Return existing if already created (prevents duplicate PCs)
       if (peerConnectionsRef.current[peerId]) {
         return peerConnectionsRef.current[peerId];
@@ -395,58 +511,35 @@ function MeetingRoomContent() {
         addTracksToConnection(pc, localStreamRef.current);
       }
 
+      // Instant disconnect detection: when peer disconnects or fails, cleanup immediately
+      pc.onconnectionstatechange = () => {
+        console.log(`[WebRTC] Peer ${peerId} connectionState: ${pc.connectionState}`);
+        if (
+          pc.connectionState === 'disconnected' ||
+          pc.connectionState === 'failed' ||
+          pc.connectionState === 'closed'
+        ) {
+          cleanupPeer(peerId);
+        }
+      };
+
+      pc.oniceconnectionstatechange = () => {
+        console.log(`[WebRTC] Peer ${peerId} iceConnectionState: ${pc.iceConnectionState}`);
+        if (
+          pc.iceConnectionState === 'disconnected' ||
+          pc.iceConnectionState === 'failed' ||
+          pc.iceConnectionState === 'closed'
+        ) {
+          cleanupPeer(peerId);
+        }
+      };
+
       peerConnectionsRef.current[peerId] = pc;
       iceQueuesRef.current[peerId] = []; // initialize empty ICE queue for this peer
       return pc;
     },
-    [sessionId]
+    [sessionId, cleanupPeer]
   );
-
-  // ── Close & cleanup a single peer connection ─────────────────────────────
-  const cleanupPeer = useCallback((peerId: string) => {
-    console.log(`[WebRTC] Cleaning up peer: ${peerId}`);
-    removedPeersRef.current.add(peerId);
-
-    if (peerConnectionsRef.current[peerId]) {
-      const pc = peerConnectionsRef.current[peerId];
-      try {
-        pc.getSenders().forEach((s) => {
-          try { pc.removeTrack(s); } catch {}
-        });
-        pc.getTransceivers().forEach((t) => {
-          try { t.stop(); } catch {}
-        });
-        pc.close();
-      } catch (err) {
-        console.warn(`[WebRTC] Error closing pc for ${peerId}:`, err);
-      }
-      delete peerConnectionsRef.current[peerId];
-    }
-    delete iceQueuesRef.current[peerId];
-
-    if (remoteStreamsRef.current[peerId]) {
-      try {
-        remoteStreamsRef.current[peerId].getTracks().forEach((t) => {
-          try { t.stop(); } catch {}
-        });
-      } catch {}
-      delete remoteStreamsRef.current[peerId];
-    }
-
-    setRemoteParticipants((prev) => {
-      if (!prev[peerId]) return prev;
-      const updated = { ...prev };
-      delete updated[peerId];
-      return updated;
-    });
-    setRemoteStreams((prev) => {
-      if (!prev[peerId]) return prev;
-      const updated = { ...prev };
-      delete updated[peerId];
-      return updated;
-    });
-    setPinnedParticipantId((prev) => (prev === peerId ? null : prev));
-  }, []);
 
   // ─── Broadcast my current state to all peers ─────────────────────────────
   const broadcastMyState = useCallback(
@@ -554,6 +647,7 @@ function MeetingRoomContent() {
 
             // Create our side of the peer connection and send offer
             const pc = createPCFor(newPeerId);
+            if (!pc) return;
             try {
               const offer = await createOffer(pc);
               ws?.send(
@@ -596,10 +690,11 @@ function MeetingRoomContent() {
 
           // ─── C: Received SDP Offer from a specific peer ─────────────────
           case 'offer': {
-            if (!remotePeerId || !message.sdp) return;
+            if (!remotePeerId || !message.sdp || removedPeersRef.current.has(remotePeerId)) return;
             console.log(`[WebRTC] Received offer from ${remotePeerId}`);
 
             const pc = createPCFor(remotePeerId);
+            if (!pc) return;
 
             // Ensure participant is in state (in case peer-joined arrived after offer)
             setRemoteParticipants((prev) => {
@@ -639,7 +734,7 @@ function MeetingRoomContent() {
 
           // ─── D: Received SDP Answer — apply to correct peer's connection ─
           case 'answer': {
-            if (!remotePeerId || !message.sdp) return;
+            if (!remotePeerId || !message.sdp || removedPeersRef.current.has(remotePeerId)) return;
             console.log(`[WebRTC] Received answer from ${remotePeerId}`);
             const pc = peerConnectionsRef.current[remotePeerId];
             if (pc) {
@@ -658,7 +753,7 @@ function MeetingRoomContent() {
 
           // ─── E: ICE candidate — queue if remoteDescription not set yet ──
           case 'ice-candidate': {
-            if (!remotePeerId || !message.candidate) return;
+            if (!remotePeerId || !message.candidate || removedPeersRef.current.has(remotePeerId)) return;
             const pc = peerConnectionsRef.current[remotePeerId];
             if (pc && pc.remoteDescription?.type) {
               // Remote description already set — add immediately
@@ -667,7 +762,7 @@ function MeetingRoomContent() {
               } catch (err) {
                 console.warn(`[WebRTC] ICE error from ${remotePeerId}:`, err);
               }
-            } else {
+            } else if (pc) {
               // Not ready yet — queue it; will be drained after answer/offer handled
               if (!iceQueuesRef.current[remotePeerId]) {
                 iceQueuesRef.current[remotePeerId] = [];
@@ -802,10 +897,11 @@ function MeetingRoomContent() {
 
           // ─── H: A participant left voluntarily or was removed ────────────
           //        Clean up ONLY that peer — do NOT affect others
+          case 'participant-left':
           case 'peer-left': {
-            const leavingId = message.session_id;
+            const leavingId = message.session_id || message.participant_id || remotePeerId;
             if (!leavingId || leavingId === sessionId) return;
-            console.log(`[Signaling] Peer left: ${leavingId}`);
+            console.log(`[Signaling] Participant left: ${leavingId}`);
             cleanupPeer(leavingId);
             break;
           }
@@ -834,10 +930,32 @@ function MeetingRoomContent() {
       ws.onclose = () => console.log('[WebSocket] Disconnected');
     }
 
+    // Tab close / page navigation handler for instant leave
+    const handleUnload = () => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        try {
+          ws.send(JSON.stringify({ type: 'leave', session_id: sessionId, sender_session_id: sessionId }));
+          ws.close();
+        } catch {}
+      }
+    };
+    window.addEventListener('beforeunload', handleUnload);
+    window.addEventListener('pagehide', handleUnload);
+
     initMeshMeeting();
 
     return () => {
       isMounted = false;
+      window.removeEventListener('beforeunload', handleUnload);
+      window.removeEventListener('pagehide', handleUnload);
+
+      // Send explicit leave signal before closing socket
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        try {
+          ws.send(JSON.stringify({ type: 'leave', session_id: sessionId, sender_session_id: sessionId }));
+        } catch {}
+      }
+
       // Cleanup on unmount
       if (stream) stream.getTracks().forEach((t) => t.stop());
       Object.values(peerConnectionsRef.current).forEach((p) => p.close());
@@ -968,13 +1086,38 @@ function MeetingRoomContent() {
 
   // ── Leave meeting (participant — does NOT end the meeting) ───────────────
   const handleLeaveMeeting = () => {
-    // IMPORTANT: Do NOT call api.updateStatus('completed') here.
-    // A single participant leaving must NOT end the meeting for others.
-    // The WebSocket disconnect event on the backend will broadcast peer-left to everyone.
+    // 1. Immediately send explicit 'leave' message to signaling server for instant peer removal
+    if (socketRef.current?.readyState === WebSocket.OPEN) {
+      try {
+        socketRef.current.send(
+          JSON.stringify({
+            type: 'leave',
+            session_id: sessionId,
+            sender_session_id: sessionId,
+          })
+        );
+      } catch (err) {
+        console.warn('[Signaling] Error sending leave message:', err);
+      }
+    }
+
+    // 2. Stop local tracks & clean up connections
     localStreamRef.current?.getTracks().forEach((t) => t.stop());
-    Object.values(peerConnectionsRef.current).forEach((p) => p.close());
+    Object.values(peerConnectionsRef.current).forEach((p) => {
+      try {
+        p.onconnectionstatechange = null;
+        p.oniceconnectionstatechange = null;
+        p.onicecandidate = null;
+        p.ontrack = null;
+        p.close();
+      } catch {}
+    });
     peerConnectionsRef.current = {};
-    socketRef.current?.close();
+
+    // 3. Close socket and navigate to home
+    try {
+      socketRef.current?.close();
+    } catch {}
     router.push('/');
   };
 
@@ -1107,7 +1250,6 @@ function MeetingRoomContent() {
           <span className="workplace-brand-tag">Workplace</span>
         </div>
         <div className="workplace-search">
-          <Search size={14} />
           <span>Zoom Meeting ID: {meetingId}</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '14px', fontSize: '12px', color: '#94A3B8' }}>
@@ -1192,6 +1334,7 @@ function MeetingRoomContent() {
                         stream={localStream}
                         isPinned={true}
                         onTogglePin={() => setPinnedParticipantId(null)}
+                        onRegisterVideoRef={registerVideoRef}
                       />
                     ) : (
                       (() => {
@@ -1208,6 +1351,7 @@ function MeetingRoomContent() {
                               stream={remoteStreams[pinnedPeer.sessionId] || null}
                               isPinned={true}
                               onTogglePin={() => setPinnedParticipantId(null)}
+                              onRegisterVideoRef={registerVideoRef}
                             />
                           );
                         } else {
@@ -1222,6 +1366,7 @@ function MeetingRoomContent() {
                               stream={localStream}
                               isPinned={false}
                               onTogglePin={() => setPinnedParticipantId('local')}
+                              onRegisterVideoRef={registerVideoRef}
                             />
                           );
                         }
@@ -1244,6 +1389,7 @@ function MeetingRoomContent() {
                             stream={localStream}
                             isPinned={false}
                             onTogglePin={() => setPinnedParticipantId('local')}
+                            onRegisterVideoRef={registerVideoRef}
                           />
                         </div>
                       )}
@@ -1261,6 +1407,7 @@ function MeetingRoomContent() {
                               stream={remoteStreams[participant.sessionId] || null}
                               isPinned={false}
                               onTogglePin={() => setPinnedParticipantId(participant.sessionId)}
+                              onRegisterVideoRef={registerVideoRef}
                             />
                           </div>
                         ))}
@@ -1280,6 +1427,7 @@ function MeetingRoomContent() {
                     stream={localStream}
                     isPinned={false}
                     onTogglePin={() => setPinnedParticipantId('local')}
+                    onRegisterVideoRef={registerVideoRef}
                   />
 
                   {/* Remote participant tiles */}
@@ -1295,6 +1443,7 @@ function MeetingRoomContent() {
                       stream={remoteStreams[participant.sessionId] || null}
                       isPinned={false}
                       onTogglePin={() => setPinnedParticipantId(participant.sessionId)}
+                      onRegisterVideoRef={registerVideoRef}
                     />
                   ))}
                 </div>
@@ -1374,10 +1523,10 @@ function MeetingRoomContent() {
                       <button
                         className={`host-action-btn ${pinnedParticipantId === 'local' ? 'pinned' : ''}`}
                         onClick={() => setPinnedParticipantId(pinnedParticipantId === 'local' ? null : 'local')}
-                        title={pinnedParticipantId === 'local' ? 'Unpin' : 'Pin'}
+                        title={pinnedParticipantId === 'local' ? 'Unpin me' : 'Pin me'}
+                        aria-label={pinnedParticipantId === 'local' ? 'Unpin me' : 'Pin me'}
                       >
-                        {pinnedParticipantId === 'local' ? <PinOff size={12} /> : <Pin size={12} />}
-                        <span>{pinnedParticipantId === 'local' ? 'Unpin' : 'Pin'}</span>
+                        {pinnedParticipantId === 'local' ? <PinOff size={14} /> : <Pin size={14} />}
                       </button>
                     </div>
                   </div>
@@ -1424,10 +1573,10 @@ function MeetingRoomContent() {
                         <button
                           className={`host-action-btn ${pinnedParticipantId === p.sessionId ? 'pinned' : ''}`}
                           onClick={() => setPinnedParticipantId(pinnedParticipantId === p.sessionId ? null : p.sessionId)}
-                          title={pinnedParticipantId === p.sessionId ? 'Unpin' : 'Pin'}
+                          title={pinnedParticipantId === p.sessionId ? 'Unpin participant' : 'Pin participant'}
+                          aria-label={pinnedParticipantId === p.sessionId ? 'Unpin participant' : 'Pin participant'}
                         >
-                          {pinnedParticipantId === p.sessionId ? <PinOff size={12} /> : <Pin size={12} />}
-                          <span>{pinnedParticipantId === p.sessionId ? 'Unpin' : 'Pin'}</span>
+                          {pinnedParticipantId === p.sessionId ? <PinOff size={14} /> : <Pin size={14} />}
                         </button>
 
                         {isHost && p.role !== 'host' && (
@@ -1436,33 +1585,33 @@ function MeetingRoomContent() {
                               className="host-action-btn make-host"
                               onClick={() => sendHostControl(p.sessionId, 'make_host')}
                               title={`Make ${p.displayName} Host`}
+                              aria-label={`Make ${p.displayName} Host`}
                             >
-                              <Shield size={12} />
-                              <span>Make Host</span>
+                              <Shield size={14} />
                             </button>
                             <button
                               className="host-action-btn"
                               onClick={() => sendHostControl(p.sessionId, 'mute')}
-                              title={`Mute ${p.displayName}`}
+                              title={p.isAudioOn ? `Mute ${p.displayName}` : `Muted (${p.displayName})`}
+                              aria-label={p.isAudioOn ? `Mute ${p.displayName}` : `Muted (${p.displayName})`}
                             >
-                              <MicOff size={12} />
-                              <span>Mute</span>
+                              {p.isAudioOn ? <MicOff size={14} /> : <Mic size={14} />}
                             </button>
                             <button
                               className="host-action-btn"
                               onClick={() => sendHostControl(p.sessionId, 'camera_off')}
-                              title={`Turn off ${p.displayName}'s camera`}
+                              title={p.isVideoOn ? `Turn off ${p.displayName}'s camera` : `Camera off (${p.displayName})`}
+                              aria-label={p.isVideoOn ? `Turn off ${p.displayName}'s camera` : `Camera off (${p.displayName})`}
                             >
-                              <VideoOff size={12} />
-                              <span>Cam Off</span>
+                              {p.isVideoOn ? <VideoOff size={14} /> : <Video size={14} />}
                             </button>
                             <button
                               className="host-action-btn remove"
                               onClick={() => handleRemoveParticipant(p.sessionId)}
                               title={`Remove ${p.displayName}`}
+                              aria-label={`Remove ${p.displayName}`}
                             >
-                              <X size={12} />
-                              <span>Remove</span>
+                              <X size={14} />
                             </button>
                           </>
                         )}

@@ -20,6 +20,7 @@ import {
   Search,
   Clock,
   X,
+  AlertTriangle,
 } from 'lucide-react';
 import { auth, UserProfile } from '@/lib/auth';
 import { api } from '@/lib/api';
@@ -29,6 +30,8 @@ import ZoomFooter from '@/components/common/ZoomFooter';
 export default function DashboardView() {
   const router = useRouter();
   const [user, setUser] = useState<UserProfile | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [authError, setAuthError] = useState<string | null>(null);
   const [upcomingMeetings, setUpcomingMeetings] = useState<Meeting[]>([]);
   const [recentMeetings, setRecentMeetings] = useState<Meeting[]>([]);
   const [isCreatingInstant, setIsCreatingInstant] = useState(false);
@@ -90,29 +93,52 @@ export default function DashboardView() {
   };
 
   useEffect(() => {
-    const curUser = auth.getCurrentUser();
-    setUser(curUser);
+    let isMounted = true;
 
-    async function fetchData() {
+    async function initializeDashboard() {
+      setLoading(true);
+      setAuthError(null);
       try {
-        const email = curUser?.email;
-        if (email) {
-          const [upcoming, recent] = await Promise.all([
-            api.getUpcomingMeetings(email).catch(() => []),
-            api.getRecentMeetings(email).catch(() => []),
-          ]);
+        // Fast path: if user already in localStorage, use immediately for instant paint
+        const cached = auth.getCurrentUser();
+        if (cached && isMounted) {
+          setUser(cached);
+        }
+
+        // Ensure default user session is valid (verifies token or fetches default user from backend)
+        const currentUser = await auth.ensureDefaultUser();
+        if (!isMounted) return;
+        setUser(currentUser);
+
+        // Fetch upcoming and recent meetings for this default/selected user
+        const [upcoming, recent] = await Promise.all([
+          api.getUpcomingMeetings(currentUser.email).catch((err) => {
+            console.error('Error fetching upcoming meetings:', err);
+            return [];
+          }),
+          api.getRecentMeetings(currentUser.email).catch((err) => {
+            console.error('Error fetching recent meetings:', err);
+            return [];
+          }),
+        ]);
+
+        if (isMounted) {
           setUpcomingMeetings(upcoming);
           setRecentMeetings(recent);
-        } else {
-          setUpcomingMeetings([]);
-          setRecentMeetings([]);
         }
-      } catch (err) {
-        console.error('Failed loading dashboard meetings:', err);
+      } catch (err: any) {
+        console.error('Failed loading default user or meetings:', err);
+        if (isMounted) {
+          setAuthError(err.message || 'Failed to initialize default user.');
+        }
+      } finally {
+        if (isMounted) {
+          setLoading(false);
+        }
       }
     }
 
-    fetchData();
+    initializeDashboard();
 
     const handleAuthChange = () => {
       const u = auth.getCurrentUser();
@@ -122,16 +148,18 @@ export default function DashboardView() {
           api.getUpcomingMeetings(u.email).catch(() => []),
           api.getRecentMeetings(u.email).catch(() => []),
         ]).then(([upcoming, recent]) => {
-          setUpcomingMeetings(upcoming);
-          setRecentMeetings(recent);
+          if (isMounted) {
+            setUpcomingMeetings(upcoming);
+            setRecentMeetings(recent);
+          }
         });
-      } else {
-        setUpcomingMeetings([]);
-        setRecentMeetings([]);
       }
     };
     window.addEventListener('auth-change', handleAuthChange);
-    return () => window.removeEventListener('auth-change', handleAuthChange);
+    return () => {
+      isMounted = false;
+      window.removeEventListener('auth-change', handleAuthChange);
+    };
   }, []);
 
   const handleCopyPmi = () => {
@@ -200,9 +228,12 @@ export default function DashboardView() {
     }
   };
 
-  const handleSignOut = () => {
+  const handleSignOut = async () => {
     auth.signOut();
-    router.push('/signin');
+    try {
+      await auth.ensureDefaultUser();
+    } catch {}
+    window.location.reload();
   };
 
   const curUser = user || (typeof window !== 'undefined' ? auth.getCurrentUser() : null);
@@ -536,6 +567,50 @@ export default function DashboardView() {
           }}
           className="dashboard-main-grid"
         >
+          {authError && (
+            <div
+              style={{
+                gridColumn: '1 / -1',
+                backgroundColor: '#FEF2F2',
+                border: '1px solid #FCA5A5',
+                color: '#991B1B',
+                padding: '16px 20px',
+                borderRadius: '10px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                fontSize: '14px',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <AlertTriangle size={20} color="#DC2626" style={{ flexShrink: 0 }} />
+                <div>
+                  <div style={{ fontWeight: 700, color: '#991B1B' }}>Database / Session Notice</div>
+                  <div style={{ fontSize: '13px', color: '#7F1D1D', marginTop: '2px' }}>{authError}</div>
+                  <div style={{ fontSize: '12px', color: '#B91C1C', marginTop: '4px' }}>
+                    Tip: Run <code>python seed.py</code> in the terminal to initialize the default user and meetings.
+                  </div>
+                </div>
+              </div>
+              <button
+                onClick={() => window.location.reload()}
+                style={{
+                  backgroundColor: '#DC2626',
+                  color: '#FFFFFF',
+                  border: 'none',
+                  padding: '8px 16px',
+                  borderRadius: '6px',
+                  fontSize: '13px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  flexShrink: 0,
+                }}
+              >
+                Retry
+              </button>
+            </div>
+          )}
+
           {/* ── Center Column ─────────────────────────────────────────── */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
             {/* Card 1: User Profile Card */}

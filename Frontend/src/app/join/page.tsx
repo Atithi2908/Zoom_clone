@@ -56,7 +56,7 @@ export default function JoinMeetingPage() {
       <Navbar />
 
       <main className="main-content">
-        <div style={{ maxWidth: '480px', margin: '40px auto' }}>
+        <div style={{ width: '100%', maxWidth: '480px', margin: '30px auto' }}>
           <Link
             href="/"
             style={{
@@ -74,6 +74,7 @@ export default function JoinMeetingPage() {
           </Link>
 
           <div
+            className="join-card"
             style={{
               background: 'white',
               borderRadius: '16px',

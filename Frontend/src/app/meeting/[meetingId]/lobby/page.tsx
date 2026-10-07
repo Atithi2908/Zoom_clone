@@ -14,7 +14,7 @@ import {
   User,
 } from 'lucide-react';
 import { api } from '@/lib/api';
-import { auth } from '@/lib/auth';
+import { auth, UserProfile } from '@/lib/auth';
 import { MeetingValidationResponse } from '@/types';
 
 function LobbyContent() {
@@ -25,7 +25,22 @@ function LobbyContent() {
   const meetingId = params.meetingId as string;
   const isHostParam = searchParams.get('host') === 'true';
   const nameParam = searchParams.get('name');
-  const loggedInUser = auth.getCurrentUser();
+  const [loggedInUser, setLoggedInUser] = useState<UserProfile | null>(auth.getCurrentUser());
+
+  useEffect(() => {
+    let isMounted = true;
+    if (!loggedInUser) {
+      auth.ensureDefaultUser().then((u) => {
+        if (isMounted) {
+          setLoggedInUser(u);
+          if (!nameParam) {
+            setDisplayName(u.full_name);
+          }
+        }
+      }).catch(() => {});
+    }
+    return () => { isMounted = false; };
+  }, [loggedInUser, nameParam]);
 
   // Meeting verification state
   const [isValidating, setIsValidating] = useState(true);
