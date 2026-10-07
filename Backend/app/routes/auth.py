@@ -145,10 +145,25 @@ def get_default_user(db: Session = Depends(get_db)):
         user = db.query(User).order_by(User.id.asc()).first()
 
     if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Default user not found. Database has not been seeded. Please run seed.py."
+        try:
+            from ..seed import seed_initial_data
+            seed_initial_data(db)
+            user = db.query(User).filter(func.lower(User.email) == DEFAULT_USER_EMAIL).first()
+        except Exception as e:
+            print(f"[AUTH] Auto-seed on-demand notice: {e}")
+
+    if not user:
+        # Ultimate fallback: create default user directly if missing
+        pwd_hash = hash_password("password123")
+        user = User(
+            email=DEFAULT_USER_EMAIL,
+            full_name="Atithi",
+            password_hash=pwd_hash,
+            created_at=datetime.now()
         )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
 
     token = create_access_token(user_id=user.id, email=user.email)
     return AuthTokenResponse(token=token, user=UserResponse.model_validate(user))

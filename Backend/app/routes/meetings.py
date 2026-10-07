@@ -153,6 +153,13 @@ def get_upcoming_meetings(host_email: Optional[str] = None, db: Session = Depend
     Retrieve meetings currently scheduled, ordered by scheduled_at ascending.
     If host_email is provided, only meetings created by this user are returned.
     """
+    if db.query(Meeting).first() is None:
+        try:
+            from ..seed import seed_initial_data
+            seed_initial_data(db)
+        except Exception as e:
+            print(f"[MEETINGS] Auto-seed upcoming error: {e}")
+
     query = db.query(Meeting).filter(Meeting.status == "scheduled")
     if host_email is not None:
         query = query.filter(func.lower(Meeting.host_email) == host_email.strip().lower())
@@ -165,6 +172,13 @@ def get_recent_meetings(host_email: Optional[str] = None, user_email: Optional[s
     Retrieve recently held/attended meetings, ordered by creation time descending.
     Returns meetings hosted by the user OR attended by the user.
     """
+    if db.query(Meeting).first() is None:
+        try:
+            from ..seed import seed_initial_data
+            seed_initial_data(db)
+        except Exception as e:
+            print(f"[MEETINGS] Auto-seed recent error: {e}")
+
     target_email = user_email or host_email
     query = db.query(Meeting)
     if target_email is not None:

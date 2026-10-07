@@ -132,12 +132,12 @@ class SignalingManager:
             for peer in list(self.rooms[meeting_id]):
                 try:
                     await peer["ws"].send_text(json.dumps({
-                        "type": "participant-left",
+                        "type": "peer-left",
                         "session_id": session_id,
                         "participant_id": session_id
                     }))
                     await peer["ws"].send_text(json.dumps({
-                        "type": "peer-left",
+                        "type": "participant-left",
                         "session_id": session_id,
                         "participant_id": session_id
                     }))
@@ -438,13 +438,13 @@ async def websocket_signaling_endpoint(
 
                     # Broadcast removal to ALL remaining peers in the room immediately
                     await manager.broadcast_all(norm_id, {
-                        "type": "participant-left",
+                        "type": "peer-left",
                         "session_id": target_session_id,
                         "participant_id": target_session_id,
                         "reason": "removed"
                     })
                     await manager.broadcast_all(norm_id, {
-                        "type": "peer-left",
+                        "type": "participant-left",
                         "session_id": target_session_id,
                         "participant_id": target_session_id,
                         "reason": "removed"

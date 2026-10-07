@@ -1,5 +1,6 @@
 import sys
 import os
+from datetime import datetime, timedelta
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from fastapi.testclient import TestClient
@@ -49,10 +50,11 @@ def test_endpoints():
     print("   [OK] Validation for non-existent meeting returned 404 as expected.")
 
     print("7. Testing Schedule Meeting...")
+    future_time = (datetime.now() + timedelta(days=2)).isoformat()
     r = client.post("/meetings/schedule", json={
         "title": "Scheduled Team Sync",
         "description": "Discuss sprint 4 items",
-        "scheduled_at": "2026-10-05T14:30:00Z",
+        "scheduled_at": future_time,
         "duration_minutes": 45
     })
     assert r.status_code == 201, f"Schedule failed: {r.text}"

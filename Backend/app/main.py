@@ -11,6 +11,11 @@ from .routes import meetings, websocket, auth
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
+    try:
+        from .seed import seed_initial_data
+        seed_initial_data()
+    except Exception as e:
+        print(f"[MAIN] Lifespan auto-seed notice: {e}")
     yield
 
 app = FastAPI(
